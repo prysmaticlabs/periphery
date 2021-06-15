@@ -34,9 +34,9 @@ jobs:
 
       - name: npm ci and npm run build:dev
         run: |
-          npm ci
-          npm run build:ci
+          cd web/ng-boilerplate && npm ci
+          cd web/ng-boilerplate && npm run build:ci
 
       - name: npm run lint
         run: |
-          npm run lint
+          cd web/ng-boilerplate && npm run lint
