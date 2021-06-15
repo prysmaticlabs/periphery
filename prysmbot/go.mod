@@ -1,4 +1,4 @@
-module github.com/prysmaticlabs/periphery
+module github.com/prysmaticlabs/periphery/prysmbot
 
 go 1.16
 
