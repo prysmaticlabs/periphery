@@ -33,7 +33,7 @@ var (
 	log = logrus.WithField("prefix", "prysmBot")
 )
 
-func init() {
+func main() {
 	flag.StringVar(&Token, "token", "", "Bot Token")
 	flag.StringVar(&APIUrl, "api-url", "", "API Url for gRPC")
 	flag.StringVar(&RPCUrl, "rpc-url", "", "RPC Url for Goerli network")
@@ -42,14 +42,11 @@ func init() {
 	flag.StringVar(&DenylistPath, "denylist", "", "Filepath to denylist of regular expressions")
 	flag.BoolVar(&Debug, "debug", false, "Enable debug logging")
 	flag.Parse()
-
 	if Debug {
 		logrus.SetLevel(logrus.DebugLevel)
 		log.Debug("Debug logging enabled.")
 	}
-}
 
-func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Create a new Discord session using the provided bot token.
@@ -83,6 +80,7 @@ func main() {
 
 	// Monitor denylist changes
 	go monitorDenylistFile(ctx, DenylistPath)
+	go monitorForUnverifiedUsers(ctx, dg)
 
 	// Open a websocket connection to Discord and begin listening.
 	err = dg.Open()
