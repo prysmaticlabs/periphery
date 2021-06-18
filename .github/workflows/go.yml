@@ -3,8 +3,12 @@ name: Go
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'prysmbot/**'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'prysmbot/**'
 
 jobs:
 
@@ -19,7 +23,9 @@ jobs:
           go-version: 1.16
 
       - name: Build
-        run: cd prysmbot && go mod download && go build -v ./...
+        working-directory: prysmbot
+        run: go mod download && go build -v ./...
 
       - name: Test
-        run: cd prysmbot && go test -v ./...
+        working-directory: prysmbot
+        run: go test -v ./...

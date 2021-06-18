@@ -6,8 +6,12 @@ name: Node.js CI
 on:
   push:
     branches: [ master ]
+    paths:
+      - 'web/**'
   pull_request:
     branches: [ master ]
+    paths:
+      - 'web/**'
 
 jobs:
   build:
@@ -21,6 +25,7 @@ jobs:
 
       - name: Cache node modules
         uses: actions/cache@v1
+        working-directory: web/ng-boilerplate
         with:
           path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -29,14 +34,17 @@ jobs:
 
       - name: Node ${{ matrix.node-version }}
         uses: actions/setup-node@v1
+        working-directory: web/ng-boilerplate
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: npm ci and npm run build:dev
+        working-directory: web/ng-boilerplate
         run: |
-          cd web/ng-boilerplate && npm ci
-          cd web/ng-boilerplate && npm run build:ci
+          npm ci
+          npm run build:ci
 
       - name: npm run lint
+        working-directory: web/ng-boilerplate
         run: |
-          cd web/ng-boilerplate && npm run lint
+          npm run lint
