@@ -5,10 +5,12 @@ on:
     branches: [ master ]
     paths:
       - 'prysmbot/**'
+      - 'eth-faucet/**'
   pull_request:
     branches: [ master ]
     paths:
       - 'prysmbot/**'
+      - 'eth-faucet/**'
 
 jobs:
 
