@@ -133,7 +133,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if fullCommand == "goerlieth" {
-		_, err := s.ChannelMessageSend(m.ChannelID, "Our goerli bot is currently disabled due to bot abuse if you're looking to setup a testnet validator we'd recommend going to the ethstaker discord and using their bot to make the testnet deposit. https://discord.io/ethstaker")
+		_, err := s.ChannelMessageSend(m.ChannelID, "Our goerli bot is currently disabled due to bot abuse if you're looking to setup a testnet validator we'd recommend going to the ethstaker discord and using their bot to make the testnet deposit.\nhttps://discord.io/ethstaker")
 		if err != nil {
 			log.WithError(err).Errorf("Error sending embed %s", fullCommand)
 		}
