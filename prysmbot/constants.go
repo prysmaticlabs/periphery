@@ -3,7 +3,7 @@ package main
 import "time"
 
 var (
-	maxUsersRetrieved = 20000
+	maxUsersRetrieved = 1000
 	maxTimeUnverified = time.Minute * 10
 
 	// Channels and server ids.
