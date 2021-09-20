@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	monitorUnverifiedInterval = time.Minute * 10
+	monitorUnverifiedInterval = time.Minute * 1
 )
 
 // Monitors for users that have not completed a captcha after a
@@ -25,6 +25,7 @@ func monitorForUnverifiedUsers(ctx context.Context, dg *discordgo.Session) {
 				log.WithError(err).Error("Could not get guild members")
 				return
 			}
+			kicked := 0
 			for _, mem := range members {
 				joinedAt, err := mem.JoinedAt.Parse()
 				if err != nil {
@@ -35,7 +36,7 @@ func monitorForUnverifiedUsers(ctx context.Context, dg *discordgo.Session) {
 					continue
 				}
 				if err := dg.GuildMemberDeleteWithReason(
-					prysmServerId, mem.User.ID, "Has not completed captcha",
+					prysmServerId, mem.User.ID, "User did not complete verification within 10 minutes",
 				); err != nil {
 					log.WithError(err).Error("Could not kick member")
 				}
@@ -43,6 +44,17 @@ func monitorForUnverifiedUsers(ctx context.Context, dg *discordgo.Session) {
 					"userId":   mem.User.ID,
 					"username": mem.User.Username,
 				}).Info("Kicked user for being unverified too long")
+				kicked++
+			}
+
+			log.WithFields(logrus.Fields{
+				"membersChecked": len(members),
+				"lastID":         fetchGuildMembersAfterId,
+				"kicked":         kicked,
+			}).Debug("Checked unverified members to kick")
+
+			if len(members) == maxUsersRetrieved {
+				log.Warn("Max users returned from API. There may be new recent members that are not checked!")
 			}
 		case <-ctx.Done():
 			return
