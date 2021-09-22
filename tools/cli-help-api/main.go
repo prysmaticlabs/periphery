@@ -26,6 +26,7 @@ const (
 var (
 	portFlag       = flag.String("port", "3000", "port for server")
 	hostFlag       = flag.String("host", "127.0.0.1", "host for server")
+	binOutputFlag  = flag.String("binary-output-path", "", "output directory for binaries")
 	componentsFlag = flag.String(
 		"components",
 		"beacon-chain,validator,client-stats",
@@ -38,6 +39,10 @@ func main() {
 	flag.Parse()
 	port := *portFlag
 	host := *hostFlag
+	binOutputPath := *binOutputFlag
+	if binOutputPath == "" {
+		log.Fatal("-binary-output-path flag not specified")
+	}
 	componentsList := *componentsFlag
 	components := strings.Split(componentsList, ",")
 	version, err := latestReleaseVersion()
@@ -69,7 +74,7 @@ func showHelpText(w io.Writer, component string) error {
 		return err
 	}
 	binName := fmt.Sprintf(releaseFormat, component, version, system, arch)
-	releasePath := filepath.Join("dist", binName)
+	releasePath := filepath.Join(*binOutputFlag, binName)
 	if _, err := os.Stat(releasePath); os.IsNotExist(err) {
 		log.Printf("Downloading release %s, not found locally", releasePath)
 		if err := downloadRelease(component, version); err != nil {
@@ -101,10 +106,10 @@ func downloadRelease(component, version string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll("dist", execPerms); err != nil {
+	if err := os.MkdirAll(*binOutputFlag, execPerms); err != nil {
 		return err
 	}
-	releasePath := filepath.Join("dist", binName)
+	releasePath := filepath.Join(*binOutputFlag, binName)
 	out, err := os.Create(releasePath)
 	if err != nil {
 		return err
