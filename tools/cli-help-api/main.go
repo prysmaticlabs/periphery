@@ -47,6 +47,7 @@ func main() {
 			}
 		})
 	}
+	log.Printf("Running API server on %s:%s", host, port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), r))
 }
 
