@@ -1,10 +1,11 @@
 # Accept the Go version for the image to be set as a build argument.
 ARG GO_VERSION=1.16
 
-# First stage: build the executable.
-FROM golang:${GO_VERSION}-alpine AS builder
+FROM golang:${GO_VERSION}-alpine
 
 # Git is required for fetching the dependencies.
+RUN apk update
+RUN apk upgrade
 RUN apk add --no-cache git
 RUN apk add ca-certificates
 
@@ -23,14 +24,6 @@ COPY ./ ./
 RUN GO111MODULE=on CGO_ENABLED=0 go build \
     -installsuffix 'static' \
     -o /app .
-
-# Final stage: the running container.
-FROM scratch AS final
-
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Import the compiled executable from the first stage.
-COPY --from=builder /app /app
 
 # Run the compiled binary.
 ENTRYPOINT ["/app"]

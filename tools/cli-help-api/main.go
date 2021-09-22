@@ -8,15 +8,19 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/gorilla/mux"
 )
 
 const (
-	prysmSh     = "https://raw.githubusercontent.com/prysmaticlabs/prysm/develop/prysm.sh"
-	prysmShPath = "prysm.sh"
-	execPerms   = 0700
+	prysmaticWebsite      = "https://prysmaticlabs.com"
+	latestReleaseEndpoint = "/releases/latest"
+	releaseEndpoint       = "/releases/"
+	arch                  = "amd64"
+	system                = "linux"
+	execPerms             = 0700
 )
 
 var (
@@ -27,6 +31,7 @@ var (
 		"beacon-chain,validator,client-stats",
 		"comma-separated list of Prysm components for which to serve help text",
 	)
+	releaseFormat = "%s-%s-%s-%s"
 )
 
 func main() {
@@ -35,13 +40,20 @@ func main() {
 	host := *hostFlag
 	componentsList := *componentsFlag
 	components := strings.Split(componentsList, ",")
-	if err := downloadScript(prysmShPath); err != nil {
+	version, err := latestReleaseVersion()
+	if err != nil {
 		log.Fatal(err)
+	}
+	for _, comp := range components {
+		if err := downloadRelease(comp, version); err != nil {
+			log.Fatal(err)
+		}
 	}
 	r := mux.NewRouter()
 	for _, comp := range components {
+		tmp := comp
 		r.HandleFunc("/"+comp, func(w http.ResponseWriter, r *http.Request) {
-			if err := showHelpText(w, comp); err != nil {
+			if err := showHelpText(w, tmp); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -52,19 +64,48 @@ func main() {
 }
 
 func showHelpText(w io.Writer, component string) error {
-	cmd := exec.Command("/bin/sh", "./prysm.sh", component, "--help")
+	version, err := latestReleaseVersion()
+	if err != nil {
+		return err
+	}
+	binName := fmt.Sprintf(releaseFormat, component, version, system, arch)
+	releasePath := filepath.Join("dist", binName)
+	if _, err := os.Stat(releasePath); os.IsNotExist(err) {
+		log.Printf("Downloading release %s, not found locally", releasePath)
+		if err := downloadRelease(component, version); err != nil {
+			return err
+		}
+	}
+	cmd := exec.Command(releasePath, "--help")
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()
 }
 
-func downloadScript(filepath string) error {
-	resp, err := http.Get(prysmSh)
+func latestReleaseVersion() (string, error) {
+	resp, err := http.Get(prysmaticWebsite + latestReleaseEndpoint)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	enc, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.Trim(string(enc), "\n"), nil
+}
+
+func downloadRelease(component, version string) error {
+	binName := fmt.Sprintf(releaseFormat, component, version, system, arch)
+	resp, err := http.Get(prysmaticWebsite + releaseEndpoint + binName)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	out, err := os.Create(filepath)
+	if err := os.MkdirAll("dist", execPerms); err != nil {
+		return err
+	}
+	releasePath := filepath.Join("dist", binName)
+	out, err := os.Create(releasePath)
 	if err != nil {
 		return err
 	}
@@ -73,5 +114,5 @@ func downloadScript(filepath string) error {
 		return err
 	}
 	// Make executable.
-	return os.Chmod(filepath, execPerms)
+	return os.Chmod(releasePath, execPerms)
 }
