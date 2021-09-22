@@ -1,12 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -14,36 +16,38 @@ import (
 const (
 	prysmSh     = "https://raw.githubusercontent.com/prysmaticlabs/prysm/develop/prysm.sh"
 	prysmShPath = "prysm.sh"
+	execPerms   = 0700
+)
+
+var (
+	portFlag       = flag.String("port", "3000", "port for server")
+	hostFlag       = flag.String("host", "127.0.0.1", "host for server")
+	componentsFlag = flag.String(
+		"components",
+		"beacon-chain,validator,client-stats",
+		"comma-separated list of Prysm components for which to serve help text",
+	)
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		log.Fatal("PORT env var not found")
-	}
+	flag.Parse()
+	port := *portFlag
+	host := *hostFlag
+	componentsList := *componentsFlag
+	components := strings.Split(componentsList, ",")
 	if err := downloadScript(prysmShPath); err != nil {
 		log.Fatal(err)
 	}
 	r := mux.NewRouter()
-	r.HandleFunc("/beacon-chain", func(w http.ResponseWriter, r *http.Request) {
-		if err := showHelpText(w, "beacon-chain"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	})
-	r.HandleFunc("/validator", func(w http.ResponseWriter, r *http.Request) {
-		if err := showHelpText(w, "validator"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	})
-	r.HandleFunc("/client-stats", func(w http.ResponseWriter, r *http.Request) {
-		if err := showHelpText(w, "client-stats"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	})
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("127.0.0.1:%s", port), r))
+	for _, comp := range components {
+		r.HandleFunc("/"+comp, func(w http.ResponseWriter, r *http.Request) {
+			if err := showHelpText(w, comp); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		})
+	}
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), r))
 }
 
 func showHelpText(w io.Writer, component string) error {
@@ -68,5 +72,5 @@ func downloadScript(filepath string) error {
 		return err
 	}
 	// Make executable.
-	return os.Chmod(filepath, 0700)
+	return os.Chmod(filepath, execPerms)
 }
