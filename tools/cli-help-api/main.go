@@ -54,6 +54,15 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	dirEntries, err := os.ReadDir(binOutputPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fileNames := make([]string, 0)
+	for _, entry := range dirEntries {
+		fileNames = append(fileNames, entry.Name())
+	}
+	log.Printf("Downloaded releases into directory %s: %v", binOutputPath, fileNames)
 	r := mux.NewRouter()
 	for _, comp := range components {
 		tmp := comp
@@ -102,6 +111,7 @@ func latestReleaseVersion() (string, error) {
 
 func downloadRelease(component, version string) error {
 	binName := fmt.Sprintf(releaseFormat, component, version, system, arch)
+	log.Printf("Downloading release for component %s", binName)
 	resp, err := http.Get(prysmaticWebsite + releaseEndpoint + binName)
 	if err != nil {
 		return err
