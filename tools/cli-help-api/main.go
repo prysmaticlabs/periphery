@@ -92,7 +92,6 @@ func showHelpText(w io.Writer, component string) error {
 	} else if err != nil {
 		return err
 	}
-	log.Print(os.Stat(releasePath))
 	cmd := exec.Command(releasePath, "--help")
 	cmd.Stdout = w
 	cmd.Stderr = w
