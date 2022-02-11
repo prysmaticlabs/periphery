@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -34,6 +36,16 @@ var (
 	)
 	releaseFormat = "%s-%s-%s-%s"
 )
+
+type Components struct {
+	Validator   *Commands `json:"validator"`
+	BeaconChain *Commands `json:"beacon-chain"`
+}
+
+type Commands struct {
+	Subcommand string                 `json:subcommand`
+	Options    []map[string]*Commands `json:"options"`
+}
 
 func main() {
 	flag.Parse()
@@ -92,10 +104,56 @@ func showHelpText(w io.Writer, component string) error {
 	} else if err != nil {
 		return err
 	}
+
+	src, err := os.Open("./flags.json")
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	srcBuffer := new(bytes.Buffer)
+	srcBuffer.ReadFrom(src)
+	flagsString := srcBuffer.String()
+
+	var dbs []*Components
+	if err := json.Unmarshal([]byte(flagsString), &dbs); err != nil {
+		return err
+	}
+
 	cmd := exec.Command(releasePath, "--help")
 	cmd.Stdout = w
 	cmd.Stderr = w
-	return cmd.Run()
+	cmd.Run()
+
+	switch component {
+	case "validator":
+		err := getSubcommands(dbs[0].Validator, releasePath, w)
+		if err != nil {
+			return err
+		}
+	case "beacon-chain":
+		err := getSubcommands(dbs[0].BeaconChain, releasePath, w)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getSubcommands(component *Commands, releasePath string, w io.Writer) error {
+	for _, dbs := range component.Options {
+		for name, options := range dbs {
+			stringSlice := strings.Split(options.Subcommand, ",")
+			for _, sc := range stringSlice {
+				cmd := exec.Command(releasePath, "--", name, sc, "--help")
+				cmd.Stdout = w
+				cmd.Stderr = w
+				cmd.Run()
+			}
+		}
+	}
+	return nil
 }
 
 func latestReleaseVersion() (string, error) {

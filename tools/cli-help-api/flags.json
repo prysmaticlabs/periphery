@@ -1,0 +1,40 @@
+[{
+    "validator": {
+        "options": [
+            {
+                "wallet": {
+                    "subcommand":"create,edit-config,recover"
+                }
+            },
+            {
+                "accounts": {
+                    "subcommand":"delete,list,backup,import,voluntary-exit"
+                }
+            },
+            {
+                "slashing-protection-history": {
+                    "subcommand":"export,import"
+                }
+            },
+            {
+                "db": {
+                    "subcommand":"restore"
+                }
+            },
+            {
+                "web": {
+                    "subcommand":"generate-auth-token"
+                }
+            }
+        ]
+    },
+	"beacon-chain": {
+        "options": [
+            {
+                "db": {
+                    "subcommand":"restore"
+                }
+            }
+        ]
+    }
+}]
