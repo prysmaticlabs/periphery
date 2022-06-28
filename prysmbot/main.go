@@ -80,7 +80,6 @@ func main() {
 
 	// Monitor denylist changes
 	go monitorDenylistFile(ctx, DenylistPath)
-	go monitorForUnverifiedUsers(ctx, dg)
 
 	// Open a websocket connection to Discord and begin listening.
 	err = dg.Open()
