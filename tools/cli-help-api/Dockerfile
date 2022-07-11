@@ -1,16 +1,11 @@
 # Accept the Go version for the image to be set as a build argument.
-ARG GO_VERSION=1.16
+ARG GO_VERSION=1.18
 
-FROM golang:${GO_VERSION}-alpine
+FROM golang:${GO_VERSION}-bullseye
 
 # Git is required for fetching the dependencies.
-RUN apk update
-RUN apk upgrade
-RUN apk add --no-cache git
-RUN apk add ca-certificates
-RUN apk add libc6-compat
-RUN apk add libgcc
-RUN apk add libstdc++
+RUN apt-get update && apt-get -y upgrade
+RUN apt-get install -y git
 
 # Set the working directory outside $GOPATH to enable the support for modules.
 WORKDIR /src
