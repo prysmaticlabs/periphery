@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
 )
 
 const (
@@ -73,8 +74,12 @@ func main() {
 			}
 		})
 	}
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"*"},
+	})
+	handler := c.Handler(r)
 	log.Printf("Running API server on %s:%s", host, port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), r))
+	log.Fatal(http.ListenAndServe(fmt.Sprintf("%s:%s", host, port), handler))
 }
 
 func showHelpText(w io.Writer, component string) error {
