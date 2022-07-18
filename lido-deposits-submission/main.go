@@ -94,29 +94,9 @@ func main() {
 	}
 	fmt.Printf("Operator ID: %d\n", operatorID)
 
-	var pubKeys []byte
-	var sigs []byte
-	for i, item := range items {
-		pub, err := hex.DecodeString(item.Pubkey)
-		if err != nil {
-			panic(err)
-		}
-		sig, err := hex.DecodeString(item.Signature)
-		if err != nil {
-			panic(err)
-		}
-		if !strings.Contains(item.WithdrawalCredentials, registryAddressHex) {
-			log.Fatalf(
-				"Withdrawal credentials %s for deposit at index %d does not contain expected "+
-					"Lido operator registry address for %v network: %v",
-				item.WithdrawalCredentials,
-				i,
-				registryAddressHex,
-				network,
-			)
-		}
-		pubKeys = append(pubKeys, pub...)
-		sigs = append(sigs, sig...)
+	pubKeys, sigs, err := extractPubkeysAndSigsFromData(items, registryAddressHex, network)
+	if err != nil {
+		panic(err)
 	}
 
 	registryABI, err := bindings.NodeOperatorsRegistryMetaData.GetAbi()
@@ -143,6 +123,37 @@ func main() {
 
 	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", registryAddressHex)
 	fmt.Printf("Calldata = %s\n", hexutil.Encode(calldata))
+}
+
+func extractPubkeysAndSigsFromData(data []*Deposit, registryAddressHex, networkName string) (pubKeys, sigs []byte, err error) {
+	for i, item := range data {
+		var pub []byte
+		var sig []byte
+		pub, err = hex.DecodeString(item.Pubkey)
+		if err != nil {
+			return
+		}
+		sig, err = hex.DecodeString(item.Signature)
+		if err != nil {
+			return
+		}
+		noPrefix := strings.TrimPrefix(registryAddressHex, "0x")
+		lowerCase := strings.ToLower(noPrefix)
+		if !strings.Contains(item.WithdrawalCredentials, lowerCase) {
+			err = fmt.Errorf(
+				"withdrawal credentials %s for deposit at index %d does not contain expected "+
+					"Lido operator registry address for %v network: %v",
+				item.WithdrawalCredentials,
+				i,
+				lowerCase,
+				networkName,
+			)
+			return
+		}
+		pubKeys = append(pubKeys, pub...)
+		sigs = append(sigs, sig...)
+	}
+	return
 }
 
 func determineLidoOperatorId(caller *bindings.NodeOperatorsRegistryCaller, operatorName string) (uint64, error) {
