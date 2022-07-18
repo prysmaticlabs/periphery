@@ -1,15 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"math/big"
 	"os"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -35,6 +33,10 @@ var (
 		"mainnet": "0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5",
 		"prater":  "0x9D4AF1Ee19Dad8857db3a45B0374c81c8A1C6320",
 	}
+	lidoStakingPoolContracts = map[string]string{
+		"prater":  "0x1643E812aE58766192Cf7D2Cf9567dF2C37e9B7F",
+		"mainnet": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+	}
 )
 
 func main() {
@@ -44,32 +46,13 @@ func main() {
 		panic("No deposit data provided")
 	}
 	network := *networkFlag
-	registryKeys := make([]string, 0)
-	for k := range registryContracts {
-		registryKeys = append(registryKeys, k)
+	operatorRegistryAddr, stakingPoolAddr, err := lidoAddresses(network)
+	if err != nil {
+		panic(err)
 	}
-	registryAddressHex, ok := registryContracts[network]
-	if !ok {
-		log.Fatalf(
-			"Network %s not found in list of registry contracts, available options are %v",
-			network,
-			registryKeys,
-		)
-	}
-	operatorRegistryAddress := common.HexToAddress(registryAddressHex)
-
 	fmt.Printf("Opening deposit data file: %s\n", *itemFlag)
-	f, err := os.Open(*itemFlag)
+	items, err := decodeDeposits(*itemFlag)
 	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	enc, err := io.ReadAll(f)
-	if err != nil {
-		panic(err)
-	}
-	items := []*Deposit{}
-	if err := json.Unmarshal(enc, &items); err != nil {
 		panic(err)
 	}
 	numItems := uint64(len(items))
@@ -80,7 +63,7 @@ func main() {
 		panic(err)
 	}
 	client := ethclient.NewClient(r)
-	registry, err := bindings.NewNodeOperatorsRegistryCaller(operatorRegistryAddress, client)
+	registry, err := bindings.NewNodeOperatorsRegistryCaller(operatorRegistryAddr, client)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +77,15 @@ func main() {
 	}
 	fmt.Printf("Operator ID: %d\n", operatorID)
 
-	pubKeys, sigs, err := extractPubkeysAndSigsFromData(items, registryAddressHex, network)
+	stakingPool, err := bindings.NewLidoCaller(stakingPoolAddr, client)
+	if err != nil {
+		panic(err)
+	}
+	withdrawalCreds, err := stakingPool.GetWithdrawalCredentials(nil)
+	if err != nil {
+		panic(err)
+	}
+	pubKeys, sigs, err := extractPubkeysAndSigsFromData(items, withdrawalCreds, network)
 	if err != nil {
 		panic(err)
 	}
@@ -121,11 +112,56 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", registryAddressHex)
+	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", operatorRegistryAddr.Hex())
 	fmt.Printf("Calldata = %s\n", hexutil.Encode(calldata))
 }
 
-func extractPubkeysAndSigsFromData(data []*Deposit, registryAddressHex, networkName string) (pubKeys, sigs []byte, err error) {
+func lidoAddresses(network string) (registryAddress, stakingPoolAddress common.Address, err error) {
+	registryKeys := make([]string, 0)
+	for k := range registryContracts {
+		registryKeys = append(registryKeys, k)
+	}
+	registryAddressHex, ok := registryContracts[network]
+	if !ok {
+		err = fmt.Errorf(
+			"network %s not found in list of registry contracts, available options are %v",
+			network,
+			registryKeys,
+		)
+		return
+	}
+	stakingPoolAddressHex, ok := lidoStakingPoolContracts[network]
+	if !ok {
+		err = fmt.Errorf(
+			"network %s not found in list of Lido staking pool contracts, available options are %v",
+			network,
+			lidoStakingPoolContracts,
+		)
+		return
+	}
+	registryAddress = common.HexToAddress(registryAddressHex)
+	stakingPoolAddress = common.HexToAddress(stakingPoolAddressHex)
+	return
+}
+
+func decodeDeposits(fPath string) ([]*Deposit, error) {
+	f, err := os.Open(fPath)
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+	items := make([]*Deposit, 0)
+	if err := json.NewDecoder(f).Decode(&items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func extractPubkeysAndSigsFromData(data []*Deposit, withdrawalCreds [32]byte, networkName string) (pubKeys, sigs []byte, err error) {
 	for i, item := range data {
 		var pub []byte
 		var sig []byte
@@ -137,15 +173,18 @@ func extractPubkeysAndSigsFromData(data []*Deposit, registryAddressHex, networkN
 		if err != nil {
 			return
 		}
-		noPrefix := strings.TrimPrefix(registryAddressHex, "0x")
-		lowerCase := strings.ToLower(noPrefix)
-		if !strings.Contains(item.WithdrawalCredentials, lowerCase) {
+		var depositWithdrawalCreds []byte
+		depositWithdrawalCreds, err = hex.DecodeString(item.WithdrawalCredentials)
+		if err != nil {
+			return
+		}
+		if !bytes.Equal(depositWithdrawalCreds, withdrawalCreds[:]) {
 			err = fmt.Errorf(
-				"withdrawal credentials %s for deposit at index %d does not contain expected "+
-					"Lido operator registry address for %v network: %v",
-				item.WithdrawalCredentials,
+				"withdrawal credentials %x for deposit at index %d do not match "+
+					"creds %x from the Lido staking pool contract for network: %v",
+				depositWithdrawalCreds,
 				i,
-				lowerCase,
+				withdrawalCreds,
 				networkName,
 			)
 			return

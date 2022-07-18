@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -36,20 +36,24 @@ var (
 )
 
 func TestCheckWithdrawalCredentialsContainsRegistry(t *testing.T) {
+	wantedCreds, err := hex.DecodeString("0100000000000000000000009d4af1ee19dad8857db3a45b0374c81c8a1c6320")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var creds [32]byte
+	copy(creds[:], wantedCreds)
 	t.Run("bad data", func(t *testing.T) {
 		decoded := []*Deposit{}
 		buf := bytes.NewBuffer([]byte(badDepositJSONTest))
 		if err := json.NewDecoder(buf).Decode(&decoded); err != nil {
 			t.Fatal(err)
 		}
-		praterAddr := registryContracts["prater"]
-		_, _, err := extractPubkeysAndSigsFromData(decoded, praterAddr, "prater")
+		_, _, err = extractPubkeysAndSigsFromData(decoded, creds, "prater")
 		if err == nil {
 			t.Fatal("Expected error in test json")
 		}
-		lowerCase := strings.ToLower(strings.TrimPrefix(praterAddr, "0x"))
-		want := fmt.Sprintf("withdrawal credentials %s for deposit at index %d does not contain expected "+
-			"Lido operator registry address for %v network: %v", decoded[0].WithdrawalCredentials, 0, lowerCase, "prater")
+		want := fmt.Sprintf("withdrawal credentials %s for deposit at index %d do not match "+
+			"creds %x from the Lido staking pool contract for network: %v", decoded[0].WithdrawalCredentials, 0, creds, "prater")
 		if err.Error() != want {
 			t.Fatalf("Wanted %v, got %v", want, err)
 		}
@@ -60,8 +64,7 @@ func TestCheckWithdrawalCredentialsContainsRegistry(t *testing.T) {
 		if err := json.NewDecoder(buf).Decode(&decoded); err != nil {
 			t.Fatal(err)
 		}
-		praterAddr := registryContracts["prater"]
-		_, _, err := extractPubkeysAndSigsFromData(decoded, praterAddr, "prater")
+		_, _, err := extractPubkeysAndSigsFromData(decoded, creds, "prater")
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
