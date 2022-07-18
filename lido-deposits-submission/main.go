@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"os"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -17,21 +19,22 @@ import (
 	"github.com/prysmaticlabs/periphery/lido-deposits-submission/bindings"
 )
 
-type Deposits struct {
-	Deposits []*Deposit
-}
-
 type Deposit struct {
-	Pubkey    string `json:"pubkey"`
-	Signature string `json:"signature"`
+	Pubkey                string `json:"pubkey"`
+	WithdrawalCredentials string `json:"withdrawal_credentials"`
+	Signature             string `json:"signature"`
 }
 
 var (
-	itemFlag                    = flag.String("deposit-data", "", "Path to the deposit data json file")
-	operatorRegistryAddressFlag = flag.String("operator-registry-address", "", "Address of the Lido node operator registry. Mainnet=0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5 Goerli=0x9D4AF1Ee19Dad8857db3a45B0374c81c8A1C6320")
-	jsonRPCEndpointFlag         = flag.String("web3", "http://localhost:8545", "JSON RPC endpoint of the Ethereum node")
-	operatorNameFlag            = flag.String("operator-name", "Prylabs", "Name of the Lido operator")
-	operatorIDFlag              = flag.Int("operator-id", -1, "ID of the operator to make deposits. If unset then the operator ID will be looked up by the operator name.")
+	itemFlag            = flag.String("deposit-data", "", "Path to the deposit data json file")
+	jsonRPCEndpointFlag = flag.String("web3", "http://localhost:8545", "JSON RPC endpoint of the Ethereum node")
+	operatorNameFlag    = flag.String("operator-name", "Prylabs", "Name of the Lido operator")
+	operatorIDFlag      = flag.Int("operator-id", -1, "ID of the operator to make deposits. If unset then the operator ID will be looked up by the operator name.")
+	networkFlag         = flag.String("network", "mainnet", "use the lido contract addresses from a specific network (default: mainnet, others: goerli")
+	registryContracts   = map[string]string{
+		"mainnet": "0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5",
+		"prater":  "0x9D4AF1Ee19Dad8857db3a45B0374c81c8A1C6320",
+	}
 )
 
 func main() {
@@ -40,9 +43,20 @@ func main() {
 	if len(*itemFlag) == 0 {
 		panic("No deposit data provided")
 	}
-	if len(*operatorRegistryAddressFlag) == 0 {
-		panic("No operator registry address provided")
+	network := *networkFlag
+	registryKeys := make([]string, 0)
+	for k := range registryContracts {
+		registryKeys = append(registryKeys, k)
 	}
+	registryAddressHex, ok := registryContracts[network]
+	if !ok {
+		log.Fatalf(
+			"Network %s not found in list of registry contracts, available options are %v",
+			network,
+			registryKeys,
+		)
+	}
+	operatorRegistryAddress := common.HexToAddress(registryAddressHex)
 
 	fmt.Printf("Opening deposit data file: %s\n", *itemFlag)
 	f, err := os.Open(*itemFlag)
@@ -66,7 +80,7 @@ func main() {
 		panic(err)
 	}
 	client := ethclient.NewClient(r)
-	registry, err := bindings.NewNodeOperatorsRegistryCaller(common.HexToAddress(*operatorRegistryAddressFlag), client)
+	registry, err := bindings.NewNodeOperatorsRegistryCaller(operatorRegistryAddress, client)
 	if err != nil {
 		panic(err)
 	}
@@ -82,7 +96,7 @@ func main() {
 
 	var pubKeys []byte
 	var sigs []byte
-	for _, item := range items {
+	for i, item := range items {
 		pub, err := hex.DecodeString(item.Pubkey)
 		if err != nil {
 			panic(err)
@@ -90,6 +104,16 @@ func main() {
 		sig, err := hex.DecodeString(item.Signature)
 		if err != nil {
 			panic(err)
+		}
+		if !strings.Contains(item.WithdrawalCredentials, registryAddressHex) {
+			log.Fatalf(
+				"Withdrawal credentials %s for deposit at index %d does not contain expected "+
+					"Lido operator registry address for %v network: %v",
+				item.WithdrawalCredentials,
+				i,
+				registryAddressHex,
+				network,
+			)
 		}
 		pubKeys = append(pubKeys, pub...)
 		sigs = append(sigs, sig...)
@@ -117,7 +141,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", *operatorRegistryAddressFlag)
+	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", registryAddressHex)
 	fmt.Printf("Calldata = %s\n", hexutil.Encode(calldata))
 }
 
