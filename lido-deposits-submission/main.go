@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"math/big"
 	"os"
 
@@ -17,21 +17,26 @@ import (
 	"github.com/prysmaticlabs/periphery/lido-deposits-submission/bindings"
 )
 
-type Deposits struct {
-	Deposits []*Deposit
-}
-
 type Deposit struct {
-	Pubkey    string `json:"pubkey"`
-	Signature string `json:"signature"`
+	Pubkey                string `json:"pubkey"`
+	WithdrawalCredentials string `json:"withdrawal_credentials"`
+	Signature             string `json:"signature"`
 }
 
 var (
-	itemFlag                    = flag.String("deposit-data", "", "Path to the deposit data json file")
-	operatorRegistryAddressFlag = flag.String("operator-registry-address", "", "Address of the Lido node operator registry. Mainnet=0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5 Goerli=0x9D4AF1Ee19Dad8857db3a45B0374c81c8A1C6320")
-	jsonRPCEndpointFlag         = flag.String("web3", "http://localhost:8545", "JSON RPC endpoint of the Ethereum node")
-	operatorNameFlag            = flag.String("operator-name", "Prylabs", "Name of the Lido operator")
-	operatorIDFlag              = flag.Int("operator-id", -1, "ID of the operator to make deposits. If unset then the operator ID will be looked up by the operator name.")
+	itemFlag            = flag.String("deposit-data", "", "Path to the deposit data json file")
+	jsonRPCEndpointFlag = flag.String("web3", "http://localhost:8545", "JSON RPC endpoint of the Ethereum node")
+	operatorNameFlag    = flag.String("operator-name", "Prylabs", "Name of the Lido operator")
+	operatorIDFlag      = flag.Int("operator-id", -1, "ID of the operator to make deposits. If unset then the operator ID will be looked up by the operator name.")
+	networkFlag         = flag.String("network", "mainnet", "use the lido contract addresses from a specific network (default: mainnet, others: goerli")
+	registryContracts   = map[string]string{
+		"mainnet": "0x55032650b14df07b85bF18A3a3eC8E0Af2e028d5",
+		"prater":  "0x9D4AF1Ee19Dad8857db3a45B0374c81c8A1C6320",
+	}
+	lidoStakingPoolContracts = map[string]string{
+		"prater":  "0x1643E812aE58766192Cf7D2Cf9567dF2C37e9B7F",
+		"mainnet": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+	}
 )
 
 func main() {
@@ -40,22 +45,14 @@ func main() {
 	if len(*itemFlag) == 0 {
 		panic("No deposit data provided")
 	}
-	if len(*operatorRegistryAddressFlag) == 0 {
-		panic("No operator registry address provided")
+	network := *networkFlag
+	operatorRegistryAddr, stakingPoolAddr, err := lidoAddresses(network)
+	if err != nil {
+		panic(err)
 	}
-
 	fmt.Printf("Opening deposit data file: %s\n", *itemFlag)
-	f, err := os.Open(*itemFlag)
+	items, err := decodeDeposits(*itemFlag)
 	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	enc, err := io.ReadAll(f)
-	if err != nil {
-		panic(err)
-	}
-	items := []*Deposit{}
-	if err := json.Unmarshal(enc, &items); err != nil {
 		panic(err)
 	}
 	numItems := uint64(len(items))
@@ -66,7 +63,7 @@ func main() {
 		panic(err)
 	}
 	client := ethclient.NewClient(r)
-	registry, err := bindings.NewNodeOperatorsRegistryCaller(common.HexToAddress(*operatorRegistryAddressFlag), client)
+	registry, err := bindings.NewNodeOperatorsRegistryCaller(operatorRegistryAddr, client)
 	if err != nil {
 		panic(err)
 	}
@@ -80,19 +77,17 @@ func main() {
 	}
 	fmt.Printf("Operator ID: %d\n", operatorID)
 
-	var pubKeys []byte
-	var sigs []byte
-	for _, item := range items {
-		pub, err := hex.DecodeString(item.Pubkey)
-		if err != nil {
-			panic(err)
-		}
-		sig, err := hex.DecodeString(item.Signature)
-		if err != nil {
-			panic(err)
-		}
-		pubKeys = append(pubKeys, pub...)
-		sigs = append(sigs, sig...)
+	stakingPool, err := bindings.NewLidoCaller(stakingPoolAddr, client)
+	if err != nil {
+		panic(err)
+	}
+	withdrawalCreds, err := stakingPool.GetWithdrawalCredentials(nil)
+	if err != nil {
+		panic(err)
+	}
+	pubKeys, sigs, err := extractPubkeysAndSigsFromData(items, withdrawalCreds, network)
+	if err != nil {
+		panic(err)
 	}
 
 	registryABI, err := bindings.NodeOperatorsRegistryMetaData.GetAbi()
@@ -117,8 +112,87 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", *operatorRegistryAddressFlag)
+	fmt.Printf("Send the following call data to the Lido node operator contract at address %s\n", operatorRegistryAddr.Hex())
 	fmt.Printf("Calldata = %s\n", hexutil.Encode(calldata))
+}
+
+func lidoAddresses(network string) (registryAddress, stakingPoolAddress common.Address, err error) {
+	registryKeys := make([]string, 0)
+	for k := range registryContracts {
+		registryKeys = append(registryKeys, k)
+	}
+	registryAddressHex, ok := registryContracts[network]
+	if !ok {
+		err = fmt.Errorf(
+			"network %s not found in list of registry contracts, available options are %v",
+			network,
+			registryKeys,
+		)
+		return
+	}
+	stakingPoolAddressHex, ok := lidoStakingPoolContracts[network]
+	if !ok {
+		err = fmt.Errorf(
+			"network %s not found in list of Lido staking pool contracts, available options are %v",
+			network,
+			lidoStakingPoolContracts,
+		)
+		return
+	}
+	registryAddress = common.HexToAddress(registryAddressHex)
+	stakingPoolAddress = common.HexToAddress(stakingPoolAddressHex)
+	return
+}
+
+func decodeDeposits(fPath string) ([]*Deposit, error) {
+	f, err := os.Open(fPath)
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+	items := make([]*Deposit, 0)
+	if err := json.NewDecoder(f).Decode(&items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func extractPubkeysAndSigsFromData(data []*Deposit, withdrawalCreds [32]byte, networkName string) (pubKeys, sigs []byte, err error) {
+	for i, item := range data {
+		var pub []byte
+		var sig []byte
+		pub, err = hex.DecodeString(item.Pubkey)
+		if err != nil {
+			return
+		}
+		sig, err = hex.DecodeString(item.Signature)
+		if err != nil {
+			return
+		}
+		var depositWithdrawalCreds []byte
+		depositWithdrawalCreds, err = hex.DecodeString(item.WithdrawalCredentials)
+		if err != nil {
+			return
+		}
+		if !bytes.Equal(depositWithdrawalCreds, withdrawalCreds[:]) {
+			err = fmt.Errorf(
+				"withdrawal credentials %x for deposit at index %d do not match "+
+					"creds %x from the Lido staking pool contract for network: %v",
+				depositWithdrawalCreds,
+				i,
+				withdrawalCreds,
+				networkName,
+			)
+			return
+		}
+		pubKeys = append(pubKeys, pub...)
+		sigs = append(sigs, sig...)
+	}
+	return
 }
 
 func determineLidoOperatorId(caller *bindings.NodeOperatorsRegistryCaller, operatorName string) (uint64, error) {
