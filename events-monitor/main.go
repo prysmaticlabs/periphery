@@ -57,27 +57,32 @@ func main() {
 				Name:        "send-to",
 				Destination: &monitorFlags.sendTo,
 				Usage:       "Recipient email address for events",
+				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-host",
 				Destination: &monitorFlags.smtpHost,
 				Usage:       "Smtp host for sending emails",
+				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-username",
 				Destination: &monitorFlags.smtpUsername,
 				Usage:       "Smtp username for sending emails",
+				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-port",
 				Destination: &monitorFlags.smtpPort,
 				Usage:       "Smtp port for sending emails",
+				Required:    true,
 			},
 			&cli.StringFlag{
-				Name: "smtp-password-file",
+				Name: "smtp-password",
 				// TODO: Ensure it is passed in as a file instead.
 				Destination: &monitorFlags.smtpPassword,
 				Usage:       "Smtp password for sending emails",
+				Required:    true,
 			},
 		},
 		Action: func(cliCtx *cli.Context) error {
@@ -87,7 +92,7 @@ func main() {
 				monitorFlags.smtpPassword,
 				monitorFlags.smtpHost,
 			)
-			sender := newBasicSmtpSender(auth, "25" /* port number */)
+			sender := newBasicSmtpSender(auth, monitorFlags.smtpPort)
 			return monitorEvents(cliCtx.Context, sender)
 		},
 	}
