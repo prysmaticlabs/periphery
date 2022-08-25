@@ -25,8 +25,8 @@ type basicSmtpSender struct {
 	auth       smtp.Auth
 }
 
-func newBasicSmtpSender(auth smtp.Auth, port string) *basicSmtpSender {
-	return &basicSmtpSender{auth: auth, portNumber: port}
+func newBasicSmtpSender(auth smtp.Auth, host, port string) *basicSmtpSender {
+	return &basicSmtpSender{auth: auth, host: host, portNumber: port}
 }
 
 func (s *basicSmtpSender) send(m *emailMessage) error {

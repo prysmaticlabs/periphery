@@ -92,7 +92,7 @@ func main() {
 				monitorFlags.smtpPassword,
 				monitorFlags.smtpHost,
 			)
-			sender := newBasicSmtpSender(auth, monitorFlags.smtpPort)
+			sender := newBasicSmtpSender(auth, monitorFlags.smtpHost, monitorFlags.smtpPort)
 			return monitorEvents(cliCtx.Context, sender)
 		},
 	}
