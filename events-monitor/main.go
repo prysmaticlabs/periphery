@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/prysmaticlabs/prysm/v3/io/file"
 	"github.com/prysmaticlabs/prysm/v3/proto/eth/service"
 	v1 "github.com/prysmaticlabs/prysm/v3/proto/eth/v1"
 	prefixed "github.com/prysmaticlabs/prysm/v3/runtime/logging/logrus-prefixed-formatter"
@@ -18,13 +19,14 @@ import (
 
 var (
 	monitorFlags = struct {
-		beaconEndpoint string
-		sendTo         string
-		smtpHost       string
-		smtpPort       string
-		smtpPassword   string
-		smtpUsername   string
-		topics         cli.StringSlice
+		beaconEndpoint   string
+		reorgDepth       uint64
+		sendTo           string
+		smtpHost         string
+		smtpPort         string
+		smtpPasswordFile string
+		smtpUsername     string
+		topics           cli.StringSlice
 	}{}
 )
 
@@ -50,8 +52,14 @@ func main() {
 			&cli.StringSliceFlag{
 				Name:        "topics",
 				Destination: &monitorFlags.topics,
-				Usage:       "List of event topics to subscribe to",
+				Usage:       "List of event topics to subscribe to. Supported: head, block, finalized_checkpoint, chain_reorg",
 				Required:    true,
+			},
+			&cli.Uint64Flag{
+				Name:        "on-reorg-depth",
+				Destination: &monitorFlags.reorgDepth,
+				Value:       2,
+				Usage:       "Notify via email only when a chain reorg of a specified depth is detected",
 			},
 			&cli.StringFlag{
 				Name:        "send-to",
@@ -78,18 +86,21 @@ func main() {
 				Required:    true,
 			},
 			&cli.StringFlag{
-				Name: "smtp-password",
-				// TODO: Ensure it is passed in as a file instead.
-				Destination: &monitorFlags.smtpPassword,
-				Usage:       "Smtp password for sending emails",
+				Name:        "smtp-password-file",
+				Destination: &monitorFlags.smtpPasswordFile,
+				Usage:       "File path to an smtp password for sending emails",
 				Required:    true,
 			},
 		},
 		Action: func(cliCtx *cli.Context) error {
+			smtpPassword, err := file.ReadFileAsBytes(monitorFlags.smtpPasswordFile)
+			if err != nil {
+				return err
+			}
 			auth := smtp.PlainAuth(
 				"",
 				monitorFlags.smtpUsername,
-				monitorFlags.smtpPassword,
+				string(smtpPassword),
 				monitorFlags.smtpHost,
 			)
 			sender := newBasicSmtpSender(auth, monitorFlags.smtpHost, monitorFlags.smtpPort)
@@ -130,18 +141,12 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				return err
 			}
 			log.WithField("head", ev).Info("Received event")
-			m := newEmailMessage(
-				"New Head Event",
-				fmt.Sprintf("Received a new blockchain head event at %v\n", time.Now()),
-			)
-			m.to = []string{monitorFlags.sendTo}
 			rawEvent, err := json.Marshal(ev)
 			if err != nil {
-				log.WithError(err).Error("Could marshal head event")
+				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			m.attachFileBytes("head.json", rawEvent)
-			if err := sender.send(m); err != nil {
+			if err := sendJSONEmail(sender, "head", rawEvent); err != nil {
 				log.WithError(err).Error("Could not send head event as email attachment")
 			}
 		case "block":
@@ -150,18 +155,60 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				return err
 			}
 			log.WithField("block", ev).Info("Received event")
+			rawEvent, err := json.Marshal(ev)
+			if err != nil {
+				log.WithError(err).Error("Could marshal event")
+				continue
+			}
+			if err := sendJSONEmail(sender, "block", rawEvent); err != nil {
+				log.WithError(err).Error("Could not send block event as email attachment")
+			}
 		case "finalized_checkpoint":
 			ev := &v1.EventFinalizedCheckpoint{}
 			if err := data.Data.UnmarshalTo(ev); err != nil {
 				return err
 			}
 			log.WithField("finalized_checkpoint", ev).Info("Received event")
+			rawEvent, err := json.Marshal(ev)
+			if err != nil {
+				log.WithError(err).Error("Could marshal event")
+				continue
+			}
+			if err := sendJSONEmail(sender, "finalized_checkpoint", rawEvent); err != nil {
+				log.WithError(err).Error("Could not send finalized_checkpoint event as email attachment")
+			}
 		case "reorg":
 			ev := &v1.EventChainReorg{}
 			if err := data.Data.UnmarshalTo(ev); err != nil {
 				return err
 			}
 			log.WithField("chain_reorg", ev).Info("Received event")
+
+			// Only notify if reorg depth is >= a user-specified value.
+			if ev.Depth < monitorFlags.reorgDepth {
+				continue
+			}
+
+			rawEvent, err := json.Marshal(ev)
+			if err != nil {
+				log.WithError(err).Error("Could marshal event")
+				continue
+			}
+			if err := sendJSONEmail(sender, "chain_reorg", rawEvent); err != nil {
+				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
+			}
 		}
 	}
+}
+
+func sendJSONEmail(sender emailSender, eventName string, data []byte) error {
+	timeNow := time.Now()
+	m := newEmailMessage(
+		fmt.Sprintf("New %s event detected", eventName),
+		fmt.Sprintf("Detected %s event at %v\n", eventName, time.Now()),
+	)
+	m.to = []string{monitorFlags.sendTo}
+	fileName := fmt.Sprintf("%s-%d.json", eventName, timeNow.Unix())
+	m.attachFileBytes(fileName, data)
+	return sender.send(m)
 }
