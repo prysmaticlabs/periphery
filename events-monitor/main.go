@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/smtp"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/prysmaticlabs/prysm/v3/io/file"
@@ -21,7 +22,9 @@ var (
 	monitorFlags = struct {
 		beaconEndpoint   string
 		reorgDepth       uint64
-		sendTo           string
+		useSendgrid      bool
+		sendTo           cli.StringSlice
+		sendFrom         string
 		smtpHost         string
 		smtpPort         string
 		smtpPasswordFile string
@@ -61,49 +64,62 @@ func main() {
 				Value:       2,
 				Usage:       "Notify via email only when a chain reorg of a specified depth is detected",
 			},
-			&cli.StringFlag{
+			&cli.StringSliceFlag{
 				Name:        "send-to",
 				Destination: &monitorFlags.sendTo,
 				Usage:       "Recipient email address for events",
 				Required:    true,
 			},
 			&cli.StringFlag{
+				Name:        "send-from",
+				Destination: &monitorFlags.sendFrom,
+				Usage:       "Sender email address for events",
+				Required:    true,
+			},
+			&cli.BoolFlag{
+				Name:        "sendgrid",
+				Destination: &monitorFlags.useSendgrid,
+				Usage:       "Whether or not to use sendgrid to send emails. Requires SENDGRID_API_KEY env var set",
+			},
+			&cli.StringFlag{
 				Name:        "smtp-host",
 				Destination: &monitorFlags.smtpHost,
 				Usage:       "Smtp host for sending emails",
-				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-username",
 				Destination: &monitorFlags.smtpUsername,
 				Usage:       "Smtp username for sending emails",
-				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-port",
 				Destination: &monitorFlags.smtpPort,
 				Usage:       "Smtp port for sending emails",
-				Required:    true,
 			},
 			&cli.StringFlag{
 				Name:        "smtp-password-file",
 				Destination: &monitorFlags.smtpPasswordFile,
 				Usage:       "File path to an smtp password for sending emails",
-				Required:    true,
 			},
 		},
 		Action: func(cliCtx *cli.Context) error {
-			smtpPassword, err := file.ReadFileAsBytes(monitorFlags.smtpPasswordFile)
-			if err != nil {
-				return err
+			var sender emailSender
+			if monitorFlags.useSendgrid {
+				sender = newSendgridSender(os.Getenv("SENDGRID_API_KEY"))
+			} else {
+				smtpPassword, err := file.ReadFileAsBytes(monitorFlags.smtpPasswordFile)
+				if err != nil {
+					return err
+				}
+				pw := strings.TrimSpace(string(smtpPassword))
+				auth := smtp.PlainAuth(
+					"",
+					monitorFlags.smtpUsername,
+					pw,
+					monitorFlags.smtpHost,
+				)
+				sender = newBasicSmtpSender(auth, monitorFlags.smtpHost, monitorFlags.smtpPort)
 			}
-			auth := smtp.PlainAuth(
-				"",
-				monitorFlags.smtpUsername,
-				string(smtpPassword),
-				monitorFlags.smtpHost,
-			)
-			sender := newBasicSmtpSender(auth, monitorFlags.smtpHost, monitorFlags.smtpPort)
 			return monitorEvents(cliCtx.Context, sender)
 		},
 	}
@@ -207,7 +223,8 @@ func sendJSONEmail(sender emailSender, eventName string, data []byte) error {
 		fmt.Sprintf("New %s event detected", eventName),
 		fmt.Sprintf("Detected %s event at %v\n", eventName, time.Now()),
 	)
-	m.to = []string{monitorFlags.sendTo}
+	m.from = monitorFlags.sendFrom
+	m.to = monitorFlags.sendTo.Value()
 	fileName := fmt.Sprintf("%s-%d.json", eventName, timeNow.Unix())
 	m.attachFileBytes(fileName, data)
 	return sender.send(m)

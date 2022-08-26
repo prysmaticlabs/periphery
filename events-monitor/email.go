@@ -35,6 +35,7 @@ func (s *basicSmtpSender) send(m *emailMessage) error {
 
 type emailMessage struct {
 	to          []string
+	from        string
 	cc          []string
 	bcc         []string
 	subject     string
@@ -54,6 +55,7 @@ func (m *emailMessage) toBytes() []byte {
 	buf := bytes.NewBuffer(nil)
 	withAttachments := len(m.attachments) > 0
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", m.subject))
+	buf.WriteString(fmt.Sprintf("From: %s\n", m.from))
 	buf.WriteString(fmt.Sprintf("To: %s\n", strings.Join(m.to, ",")))
 	if len(m.cc) > 0 {
 		buf.WriteString(fmt.Sprintf("Cc: %s\n", strings.Join(m.cc, ",")))
