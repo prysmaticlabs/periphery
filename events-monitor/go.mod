@@ -3,7 +3,7 @@ module github.com/prysmaticlabs/periphery/events-monitor
 go 1.18
 
 require (
-	github.com/prysmaticlabs/prysm/v3 v3.0.0
+	github.com/prysmaticlabs/prysm/v3 v3.0.1-0.20220826145432-30cd158ae555
 	github.com/sirupsen/logrus v1.9.0
 	github.com/urfave/cli/v2 v2.11.2
 	google.golang.org/grpc v1.40.0
@@ -13,7 +13,7 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.2.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
-	github.com/ethereum/go-ethereum v1.10.20 // indirect
+	github.com/ethereum/go-ethereum v1.10.23 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.0.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.14 // indirect

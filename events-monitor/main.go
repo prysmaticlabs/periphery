@@ -21,6 +21,7 @@ import (
 var (
 	monitorFlags = struct {
 		beaconEndpoint   string
+		httpEndpoint     string
 		reorgDepth       uint64
 		useSendgrid      bool
 		sendTo           cli.StringSlice
@@ -50,7 +51,13 @@ func main() {
 				Name:        "grpc-endpoint",
 				Destination: &monitorFlags.beaconEndpoint,
 				Value:       "localhost:4000",
-				Usage:       "gRPC endpoint for an Ethereum beacon node",
+				Usage:       "gRPC endpoint for an Prysm beacon node",
+			},
+			&cli.StringFlag{
+				Name:        "http-endpoint",
+				Destination: &monitorFlags.httpEndpoint,
+				Value:       "localhost:3500",
+				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
 			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
