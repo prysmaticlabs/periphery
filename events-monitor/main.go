@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/smtp"
 	"os"
 	"strings"
 	"time"
 
+	types "github.com/prysmaticlabs/prysm/v3/consensus-types/primitives"
 	"github.com/prysmaticlabs/prysm/v3/io/file"
 	"github.com/prysmaticlabs/prysm/v3/proto/eth/service"
 	v1 "github.com/prysmaticlabs/prysm/v3/proto/eth/v1"
@@ -18,8 +20,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+const emailSlotsPerReorg = 32 // If we receive a reorg event, for the next 32 slots, email a forkchoice dump.
+
 var (
-	monitorFlags = struct {
+	forkchoiceDebugMethod = "/eth/v1/debug/beacon/forkchoice"
+	monitorFlags          = struct {
 		beaconEndpoint   string
 		httpEndpoint     string
 		reorgDepth       uint64
@@ -62,7 +67,7 @@ func main() {
 			&cli.StringSliceFlag{
 				Name:        "topics",
 				Destination: &monitorFlags.topics,
-				Usage:       "List of event topics to subscribe to. Supported: head, block, finalized_checkpoint, chain_reorg",
+				Usage:       "List of event topics to subscribe to. Supported: head, chain_reorg",
 				Required:    true,
 			},
 			&cli.Uint64Flag{
@@ -136,6 +141,11 @@ func main() {
 	}
 }
 
+type reorgDetectedMetadata struct {
+	hadReorg  bool
+	reorgSlot types.Slot
+}
+
 func monitorEvents(ctx context.Context, sender emailSender) error {
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
@@ -148,6 +158,11 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	if err != nil {
 		return err
 	}
+
+	// If we receive a reorg, we keep track of it in a special struct, and for the next EMAIL_SLOTS_PER_REORG
+	// slots, we then we send an email with a forkchoice dump. Then, we reset this struct to default values.
+	reorgDetected := &reorgDetectedMetadata{}
+
 	for {
 		data, err := recv.Recv()
 		if err != nil {
@@ -169,36 +184,31 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			if err := sendJSONEmail(sender, "head", rawEvent); err != nil {
+			if err := sendJSONEmail(sender, "head", rawEvent, nil); err != nil {
 				log.WithError(err).Error("Could not send head event as email attachment")
 			}
-		case "block":
-			ev := &v1.EventBlock{}
-			if err := data.Data.UnmarshalTo(ev); err != nil {
-				return err
-			}
-			log.WithField("block", ev).Info("Received event")
-			rawEvent, err := json.Marshal(ev)
-			if err != nil {
-				log.WithError(err).Error("Could marshal event")
-				continue
-			}
-			if err := sendJSONEmail(sender, "block", rawEvent); err != nil {
-				log.WithError(err).Error("Could not send block event as email attachment")
-			}
-		case "finalized_checkpoint":
-			ev := &v1.EventFinalizedCheckpoint{}
-			if err := data.Data.UnmarshalTo(ev); err != nil {
-				return err
-			}
-			log.WithField("finalized_checkpoint", ev).Info("Received event")
-			rawEvent, err := json.Marshal(ev)
-			if err != nil {
-				log.WithError(err).Error("Could marshal event")
-				continue
-			}
-			if err := sendJSONEmail(sender, "finalized_checkpoint", rawEvent); err != nil {
-				log.WithError(err).Error("Could not send finalized_checkpoint event as email attachment")
+
+			if reorgDetected.hadReorg {
+				// If we had a reorg, we send out emails with forkchoice dumps for the next
+				// EMAIL_SLOTS_PER_REORG slots.
+				if ev.Slot < reorgDetected.reorgSlot+emailSlotsPerReorg {
+					forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
+					if err != nil {
+						log.WithError(err).Error("Could not get forkchoice dump data")
+						continue
+					}
+					evData, err := json.Marshal(ev)
+					if err != nil {
+						log.WithError(err).Error("Could marshal event")
+						continue
+					}
+					if err := sendJSONEmail(sender, "head", evData, forkchoiceDump); err != nil {
+						log.WithError(err).Error("Could not send head event as email attachment")
+					}
+				} else {
+					// We reset the metadata struct.
+					reorgDetected = &reorgDetectedMetadata{}
+				}
 			}
 		case "reorg":
 			ev := &v1.EventChainReorg{}
@@ -212,27 +222,51 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				continue
 			}
 
-			rawEvent, err := json.Marshal(ev)
+			reorgDetected = &reorgDetectedMetadata{
+				hadReorg:  true,
+				reorgSlot: ev.Slot,
+			}
+
+			forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
+			if err != nil {
+				log.WithError(err).Error("Could not get forkchoice dump data")
+				continue
+			}
+			evData, err := json.Marshal(ev)
 			if err != nil {
 				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			if err := sendJSONEmail(sender, "chain_reorg", rawEvent); err != nil {
+			if err := sendJSONEmail(sender, "chain_reorg", evData, forkchoiceDump); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
 			}
 		}
 	}
 }
 
-func sendJSONEmail(sender emailSender, eventName string, data []byte) error {
+func getForkchoiceDump(endpoint string) ([]byte, error) {
+	var forkchoiceDump map[string]interface{}
+	resp, err := http.Get(endpoint + forkchoiceDebugMethod)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&forkchoiceDump); err != nil {
+		return nil, err
+	}
+	return json.Marshal(forkchoiceDump)
+}
+
+func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte, extraData []byte) error {
 	timeNow := time.Now()
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
-		fmt.Sprintf("Detected %s event at %v\n", eventName, time.Now()),
+		fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), string(eventJSON)),
 	)
 	m.from = monitorFlags.sendFrom
 	m.to = monitorFlags.sendTo.Value()
-	fileName := fmt.Sprintf("%s-%d.json", eventName, timeNow.Unix())
-	m.attachFileBytes(fileName, data)
+	if extraData != nil {
+		fileName := fmt.Sprintf("%s-%d.json", eventName, timeNow.Unix())
+		m.attachFileBytes(fileName, extraData)
+	}
 	return sender.send(m)
 }
