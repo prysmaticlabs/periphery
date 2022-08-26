@@ -73,7 +73,7 @@ func main() {
 			&cli.Uint64Flag{
 				Name:        "on-reorg-depth",
 				Destination: &monitorFlags.reorgDepth,
-				Value:       2,
+				Value:       3,
 				Usage:       "Notify via email only when a chain reorg of a specified depth is detected",
 			},
 			&cli.StringSliceFlag{
@@ -217,8 +217,8 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 			}
 			log.WithField("chain_reorg", ev).Info("Received event")
 
-			// Only notify if reorg depth is >= a user-specified value.
-			if ev.Depth < monitorFlags.reorgDepth {
+			// Only notify if user-specified value > reorg depth.
+			if monitorFlags.reorgDepth > ev.Depth {
 				continue
 			}
 
