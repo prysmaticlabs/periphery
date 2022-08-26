@@ -185,9 +185,6 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			if err := sendJSONEmail(sender, "head", rawEvent, nil); err != nil {
-				log.WithError(err).Error("Could not send head event as email attachment")
-			}
 			if reorgDetected.hadReorg {
 				// If we had a reorg, we send out emails with forkchoice dumps for the next
 				// EMAIL_SLOTS_PER_REORG slots.
