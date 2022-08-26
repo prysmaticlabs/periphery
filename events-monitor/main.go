@@ -61,7 +61,7 @@ func main() {
 			&cli.StringFlag{
 				Name:        "http-endpoint",
 				Destination: &monitorFlags.httpEndpoint,
-				Value:       "localhost:3500",
+				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
 			},
 			&cli.StringSliceFlag{
@@ -162,6 +162,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	// If we receive a reorg, we keep track of it in a special struct, and for the next EMAIL_SLOTS_PER_REORG
 	// slots, we then we send an email with a forkchoice dump. Then, we reset this struct to default values.
 	reorgDetected := &reorgDetectedMetadata{}
+	_ = reorgDetected
 
 	for {
 		data, err := recv.Recv()
@@ -184,10 +185,6 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			if err := sendJSONEmail(sender, "head", rawEvent, nil); err != nil {
-				log.WithError(err).Error("Could not send head event as email attachment")
-			}
-
 			if reorgDetected.hadReorg {
 				// If we had a reorg, we send out emails with forkchoice dumps for the next
 				// EMAIL_SLOTS_PER_REORG slots.
@@ -197,12 +194,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 						log.WithError(err).Error("Could not get forkchoice dump data")
 						continue
 					}
-					evData, err := json.Marshal(ev)
-					if err != nil {
-						log.WithError(err).Error("Could marshal event")
-						continue
-					}
-					if err := sendJSONEmail(sender, "head", evData, forkchoiceDump); err != nil {
+					if err := sendJSONEmail(sender, "head", rawEvent, forkchoiceDump); err != nil {
 						log.WithError(err).Error("Could not send head event as email attachment")
 					}
 				} else {
