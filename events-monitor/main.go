@@ -202,7 +202,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 					reorgDetected = &reorgDetectedMetadata{}
 				}
 			}
-		case "reorg":
+		case "chain_reorg":
 			ev := &v1.EventChainReorg{}
 			if err := data.Data.UnmarshalTo(ev); err != nil {
 				return err
