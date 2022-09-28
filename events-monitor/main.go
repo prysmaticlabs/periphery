@@ -226,8 +226,8 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 			}
 			evData, err := json.Marshal(ev)
 			if err != nil {
-				log.WithError(err).Error("Could marshal event")
-				evData = []byte("Could marshal event") // Send error as data.
+				log.WithError(err).Error("Could not marshal event")
+				evData = []byte("Could not marshal event") // Send error as data.
 			}
 			if err := sendJSONEmail(sender, "chain_reorg", evData, forkchoiceDump); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
