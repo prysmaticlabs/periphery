@@ -222,12 +222,12 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 			forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
 			if err != nil {
 				log.WithError(err).Error("Could not get forkchoice dump data")
-				continue
+				forkchoiceDump = []byte("Could not get forkchoice dump data") // Send something to avoid empty email.
 			}
 			evData, err := json.Marshal(ev)
 			if err != nil {
 				log.WithError(err).Error("Could marshal event")
-				continue
+				evData = []byte("Could marshal event") // Send error as data.
 			}
 			if err := sendJSONEmail(sender, "chain_reorg", evData, forkchoiceDump); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
