@@ -174,34 +174,6 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 			continue
 		}
 		switch data.Event {
-		case "head":
-			ev := &v1.EventHead{}
-			if err := data.Data.UnmarshalTo(ev); err != nil {
-				return err
-			}
-			log.WithField("head", ev).Info("Received event")
-			rawEvent, err := json.Marshal(ev)
-			if err != nil {
-				log.WithError(err).Error("Could marshal event")
-				continue
-			}
-			if reorgDetected.hadReorg {
-				// If we had a reorg, we send out emails with forkchoice dumps for the next
-				// EMAIL_SLOTS_PER_REORG slots.
-				if ev.Slot < reorgDetected.reorgSlot+emailSlotsPerReorg {
-					forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
-					if err != nil {
-						log.WithError(err).Error("Could not get forkchoice dump data")
-						continue
-					}
-					if err := sendJSONEmail(sender, "head", rawEvent, forkchoiceDump); err != nil {
-						log.WithError(err).Error("Could not send head event as email attachment")
-					}
-				} else {
-					// We reset the metadata struct.
-					reorgDetected = &reorgDetectedMetadata{}
-				}
-			}
 		case "chain_reorg":
 			ev := &v1.EventChainReorg{}
 			if err := data.Data.UnmarshalTo(ev); err != nil {
