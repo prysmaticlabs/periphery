@@ -30,7 +30,7 @@ var (
 	binOutputFlag  = flag.String("binary-output-path", "", "output directory for binaries")
 	componentsFlag = flag.String(
 		"components",
-		"beacon-chain,validator,client-stats",
+		"beacon-chain,validator,client-stats,prysmctl",
 		"comma-separated list of Prysm components for which to serve help text",
 	)
 	releaseFormat = "%s-%s-%s-%s"
