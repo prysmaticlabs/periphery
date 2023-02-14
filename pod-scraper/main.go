@@ -105,6 +105,12 @@ func main() {
 				Value:       "",
 				Usage:       "Bucket name for gcp uploads",
 			},
+			&cli.StringFlag{
+				Name:        "scrape-dir",
+				Destination: &monitorFlags.scrapeDir,
+				Value:       "",
+				Usage:       "Directory to scrape",
+			},
 			&cli.BoolFlag{
 				Name:        "fluentd",
 				Destination: &monitorFlags.fluentd,
