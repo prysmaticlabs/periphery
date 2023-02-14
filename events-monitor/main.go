@@ -254,7 +254,6 @@ func writeForkchoiceDump() error {
 		return err
 	}
 	defer func() {
-
 		if err = f.Close(); err != nil {
 			log.WithError(err).Error("Could not close file")
 		}
