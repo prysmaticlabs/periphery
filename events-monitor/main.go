@@ -251,8 +251,12 @@ func purgeOldFiles(dir string, ttl time.Duration) error {
 }
 
 func writeForkchoiceDump() error {
-	forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
+	var forkchoiceDump map[string]interface{}
+	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
 	if err != nil {
+		return err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&forkchoiceDump); err != nil {
 		return err
 	}
 	fileName := forkchoiceFileName()
@@ -266,18 +270,6 @@ func writeForkchoiceDump() error {
 		}
 	}()
 	return json.NewEncoder(f).Encode(forkchoiceDump)
-}
-
-func getForkchoiceDump(endpoint string) ([]byte, error) {
-	var forkchoiceDump map[string]interface{}
-	resp, err := http.Get(endpoint + forkchoiceDebugMethod)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&forkchoiceDump); err != nil {
-		return nil, err
-	}
-	return json.Marshal(forkchoiceDump)
 }
 
 func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte) error {
