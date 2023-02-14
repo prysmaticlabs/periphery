@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"log"
 	"os"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"path/filepath"
 )
@@ -22,11 +21,18 @@ var (
 	}{}
 )
 
+func init() {
+	formatter := new(logrus.TextFormatter)
+	formatter.TimestampFormat = "2006-01-02 15:04:05"
+	formatter.FullTimestamp = true
+	logrus.SetFormatter(formatter)
+}
+
 func scrapePodData() error {
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		logrus.Fatalf("Failed to create client: %v", err)
 	}
 
 	ticker := time.NewTicker(monitorFlags.scrapeInterval)
@@ -36,7 +42,7 @@ func scrapePodData() error {
 		select {
 		case <-ticker.C:
 			if err := uploadFilesToBucket(ctx, client); err != nil {
-				log.Println(fmt.Sprintf("err uploading to bucket: %v", err))
+				logrus.WithError(err).Error("Error uploading to bucket")
 			}
 		case <-ctx.Done():
 			return nil
@@ -54,7 +60,7 @@ func uploadFilesToBucket(ctx context.Context, client *storage.Client) error {
 			continue
 		}
 		if err := uploadFile(ctx, client, fItem.Name()); err != nil {
-			log.Println(fmt.Sprintf("err uploading to bucket: %v", err))
+			logrus.WithError(err).Error("Error uploading to bucket")
 			continue
 		}
 	}
@@ -69,7 +75,7 @@ func uploadFile(ctx context.Context, client *storage.Client, fName string) error
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			log.Println(err)
+			logrus.WithError(err).Error("Could not close file")
 		}
 	}()
 	wc := client.Bucket(monitorFlags.bucketName).Object(fName).NewWriter(ctx)
@@ -109,6 +115,6 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 }
