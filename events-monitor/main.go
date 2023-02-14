@@ -209,10 +209,38 @@ func storeForkchoiceDumps(ctx context.Context) {
 			if err := writeForkchoiceDump(); err != nil {
 				log.WithError(err).Error("Could not write forkchoice dump")
 			}
+			if err := purgeOldFiles(monitorFlags.outDir, time.Hour*48); err != nil {
+				log.WithError(err).Error("Could not purge old forkchoice dumps")
+			}
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func purgeOldFiles(dir string, ttl time.Duration) error {
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.IsDir() {
+			continue
+		}
+		info, err := item.Info()
+		if err != nil {
+			log.WithError(err).Error("Could not get file info")
+			continue
+		}
+		purgeCutoff := time.Now().Add(-ttl)
+		if purgeCutoff.After(info.ModTime()) {
+			if err = os.Remove(filepath.Join(dir, info.Name())); err != nil {
+				log.WithError(err).Error("Could not remove file")
+				continue
+			}
+		}
+	}
+	return nil
 }
 
 func writeForkchoiceDump() error {
