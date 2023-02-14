@@ -28,7 +28,6 @@ var (
 	monitorFlags          = struct {
 		beaconEndpoint     string
 		httpEndpoint       string
-		reorgDepth         uint64
 		outDir             string
 		storeDumpsInterval time.Duration
 		useSendgrid        bool
@@ -84,12 +83,6 @@ func main() {
 				Destination: &monitorFlags.topics,
 				Usage:       "List of event topics to subscribe to. Supported: head, chain_reorg",
 				Required:    true,
-			},
-			&cli.Uint64Flag{
-				Name:        "on-reorg-depth",
-				Destination: &monitorFlags.reorgDepth,
-				Value:       3,
-				Usage:       "Notify via email only when a chain reorg of a specified depth is detected",
 			},
 			&cli.StringSliceFlag{
 				Name:        "send-to",
