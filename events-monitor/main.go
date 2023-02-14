@@ -257,16 +257,20 @@ func writeForkchoiceDump() error {
 		return err
 	}
 	fileName := forkchoiceFileName()
-	f, err := os.Create(filepath.Join(monitorFlags.outDir, fileName))
+	fPath := filepath.Join(monitorFlags.outDir, fileName)
+	f, err := os.Create(fPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not write file %s: %v", fPath, err)
 	}
 	defer func() {
 		if err = f.Close(); err != nil {
 			log.WithError(err).Error("Could not close file")
 		}
 	}()
-	return json.NewEncoder(f).Encode(forkchoiceDump)
+	if err := json.NewEncoder(f).Encode(forkchoiceDump); err != nil {
+		return fmt.Errorf("could not write json to file %s, %+v: %v", fPath, forkchoiceDump, err)
+	}
+	return nil
 }
 
 func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte) error {
