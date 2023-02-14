@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,17 +26,19 @@ const emailSlotsPerReorg = 32 // If we receive a reorg event, for the next 32 sl
 var (
 	forkchoiceDebugMethod = "/eth/v1/debug/forkchoice"
 	monitorFlags          = struct {
-		beaconEndpoint   string
-		httpEndpoint     string
-		reorgDepth       uint64
-		useSendgrid      bool
-		sendTo           cli.StringSlice
-		sendFrom         string
-		smtpHost         string
-		smtpPort         string
-		smtpPasswordFile string
-		smtpUsername     string
-		topics           cli.StringSlice
+		beaconEndpoint     string
+		httpEndpoint       string
+		outDir             string
+		storeDumpsInterval time.Duration
+		purgeDumpsInterval time.Duration
+		useSendgrid        bool
+		sendTo             cli.StringSlice
+		sendFrom           string
+		smtpHost           string
+		smtpPort           string
+		smtpPasswordFile   string
+		smtpUsername       string
+		topics             cli.StringSlice
 	}{}
 )
 
@@ -64,17 +67,29 @@ func main() {
 				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
 			},
+			&cli.StringFlag{
+				Name:        "out-dir",
+				Destination: &monitorFlags.outDir,
+				Value:       "out",
+				Usage:       "Directory for storing forkchoice dumps",
+			},
+			&cli.DurationFlag{
+				Name:        "store-dumps-interval",
+				Destination: &monitorFlags.storeDumpsInterval,
+				Value:       time.Minute * 5,
+				Usage:       "Interval to store forkchoice dumps (default 5m)",
+			},
+			&cli.DurationFlag{
+				Name:        "purge-dumps-after",
+				Destination: &monitorFlags.purgeDumpsInterval,
+				Value:       time.Hour * 48,
+				Usage:       "Interval to purge forkchoice dumps (default 48h)",
+			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
 				Destination: &monitorFlags.topics,
 				Usage:       "List of event topics to subscribe to. Supported: head, chain_reorg",
 				Required:    true,
-			},
-			&cli.Uint64Flag{
-				Name:        "on-reorg-depth",
-				Destination: &monitorFlags.reorgDepth,
-				Value:       3,
-				Usage:       "Notify via email only when a chain reorg of a specified depth is detected",
 			},
 			&cli.StringSliceFlag{
 				Name:        "send-to",
@@ -147,6 +162,9 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
+	if err := os.MkdirAll(monitorFlags.outDir, os.ModeDir); err != nil {
+		return err
+	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
 		return err
@@ -159,10 +177,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 		return err
 	}
 
-	// If we receive a reorg, we keep track of it in a special struct, and for the next EMAIL_SLOTS_PER_REORG
-	// slots, we then we send an email with a forkchoice dump. Then, we reset this struct to default values.
-	reorgDetected := &reorgDetectedMetadata{}
-	_ = reorgDetected
+	go storeForkchoiceDumps(ctx)
 
 	for {
 		data, err := recv.Recv()
@@ -180,32 +195,77 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				return err
 			}
 			log.WithField("chain_reorg", ev).Info("Received event")
-
-			// Only notify if user-specified value > reorg depth.
-			if monitorFlags.reorgDepth > ev.Depth {
-				continue
-			}
-
-			reorgDetected = &reorgDetectedMetadata{
-				hadReorg:  true,
-				reorgSlot: ev.Slot,
-			}
-
-			forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
-			if err != nil {
-				log.WithError(err).Error("Could not get forkchoice dump data")
-				continue
-			}
 			evData, err := json.Marshal(ev)
 			if err != nil {
 				log.WithError(err).Error("Could marshal event")
 				continue
 			}
-			if err := sendJSONEmail(sender, "chain_reorg", evData, forkchoiceDump); err != nil {
+			if err := sendJSONEmail(sender, "chain_reorg", evData); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
 			}
 		}
 	}
+}
+
+func storeForkchoiceDumps(ctx context.Context) {
+	timer := time.NewTicker(monitorFlags.storeDumpsInterval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			if err := writeForkchoiceDump(); err != nil {
+				log.WithError(err).Error("Could not write forkchoice dump")
+			}
+			if err := purgeOldFiles(monitorFlags.outDir, monitorFlags.purgeDumpsInterval); err != nil {
+				log.WithError(err).Error("Could not purge old forkchoice dumps")
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func purgeOldFiles(dir string, ttl time.Duration) error {
+	items, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.IsDir() {
+			continue
+		}
+		info, err := item.Info()
+		if err != nil {
+			log.WithError(err).Error("Could not get file info")
+			continue
+		}
+		purgeCutoff := time.Now().Add(-ttl)
+		if purgeCutoff.After(info.ModTime()) {
+			if err = os.Remove(filepath.Join(dir, info.Name())); err != nil {
+				log.WithError(err).Error("Could not remove file")
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+func writeForkchoiceDump() error {
+	forkchoiceDump, err := getForkchoiceDump(monitorFlags.httpEndpoint)
+	if err != nil {
+		return err
+	}
+	fileName := forkchoiceFileName()
+	f, err := os.Create(filepath.Join(monitorFlags.outDir, fileName))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = f.Close(); err != nil {
+			log.WithError(err).Error("Could not close file")
+		}
+	}()
+	return json.NewEncoder(f).Encode(forkchoiceDump)
 }
 
 func getForkchoiceDump(endpoint string) ([]byte, error) {
@@ -220,17 +280,20 @@ func getForkchoiceDump(endpoint string) ([]byte, error) {
 	return json.Marshal(forkchoiceDump)
 }
 
-func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte, extraData []byte) error {
-	timeNow := time.Now()
+func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte) error {
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
 		fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), string(eventJSON)),
 	)
 	m.from = monitorFlags.sendFrom
 	m.to = monitorFlags.sendTo.Value()
-	if extraData != nil {
-		fileName := fmt.Sprintf("%s-%d.json", eventName, timeNow.Unix())
-		m.attachFileBytes(fileName, extraData)
-	}
 	return sender.send(m)
+}
+
+func forkchoiceFileName() string {
+	// Use layout string for time format.
+	const layout = "2006-01-02-03:04:05-pm"
+	// Place now in the string.
+	t := time.Now()
+	return "forkchoicedump-" + t.Format(layout) + ".json"
 }
