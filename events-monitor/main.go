@@ -162,9 +162,6 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
-	if err := os.MkdirAll(monitorFlags.outDir, os.ModeDir); err != nil {
-		return err
-	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
 		return err
