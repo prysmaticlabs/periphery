@@ -24,13 +24,5 @@ RUN GO111MODULE=on CGO_ENABLED=0 go build \
     -installsuffix 'static' \
     -o /app .
 
-# Final stage: the running container.
-FROM scratch AS final
-
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Import the compiled executable from the first stage.
-COPY --from=builder /app /app
-
 # Run the compiled binary.
 ENTRYPOINT ["/app"]
