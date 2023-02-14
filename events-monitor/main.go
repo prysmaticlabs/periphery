@@ -30,6 +30,7 @@ var (
 		httpEndpoint       string
 		outDir             string
 		storeDumpsInterval time.Duration
+		purgeDumpsInterval time.Duration
 		useSendgrid        bool
 		sendTo             cli.StringSlice
 		sendFrom           string
@@ -77,6 +78,12 @@ func main() {
 				Destination: &monitorFlags.storeDumpsInterval,
 				Value:       time.Minute * 5,
 				Usage:       "Interval to store forkchoice dumps (default 5m)",
+			},
+			&cli.DurationFlag{
+				Name:        "purge-dumps-after",
+				Destination: &monitorFlags.purgeDumpsInterval,
+				Value:       time.Hour * 48,
+				Usage:       "Interval to purge forkchoice dumps (default 48h)",
 			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
@@ -209,7 +216,7 @@ func storeForkchoiceDumps(ctx context.Context) {
 			if err := writeForkchoiceDump(); err != nil {
 				log.WithError(err).Error("Could not write forkchoice dump")
 			}
-			if err := purgeOldFiles(monitorFlags.outDir, time.Hour*48); err != nil {
+			if err := purgeOldFiles(monitorFlags.outDir, monitorFlags.purgeDumpsInterval); err != nil {
 				log.WithError(err).Error("Could not purge old forkchoice dumps")
 			}
 		case <-ctx.Done():
