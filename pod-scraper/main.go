@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
-	"github.com/sirupsen/logrus"
+	joonix "github.com/joonix/log"
+	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"path/filepath"
 )
@@ -15,24 +16,26 @@ import (
 var (
 	monitorFlags = struct {
 		projectId      string
+		fluentd        bool
 		bucketName     string
 		scrapeDir      string
 		scrapeInterval time.Duration
 	}{}
 )
 
-func init() {
-	formatter := new(logrus.TextFormatter)
-	formatter.TimestampFormat = "2006-01-02 15:04:05"
-	formatter.FullTimestamp = true
-	logrus.SetFormatter(formatter)
-}
-
 func scrapePodData() error {
+	if monitorFlags.fluentd {
+		f := joonix.NewFormatter()
+		if err := joonix.DisableTimestampFormat(f); err != nil {
+			log.Fatal(err)
+		}
+		log.SetFormatter(f)
+	}
+
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		logrus.Fatalf("Failed to create client: %v", err)
+		log.Fatalf("Failed to create client: %v", err)
 	}
 
 	ticker := time.NewTicker(monitorFlags.scrapeInterval)
@@ -42,7 +45,7 @@ func scrapePodData() error {
 		select {
 		case <-ticker.C:
 			if err := uploadFilesToBucket(ctx, client); err != nil {
-				logrus.WithError(err).Error("Error uploading to bucket")
+				log.WithError(err).Error("Error uploading to bucket")
 			}
 		case <-ctx.Done():
 			return nil
@@ -60,7 +63,7 @@ func uploadFilesToBucket(ctx context.Context, client *storage.Client) error {
 			continue
 		}
 		if err := uploadFile(ctx, client, fItem.Name()); err != nil {
-			logrus.WithError(err).Error("Error uploading to bucket")
+			log.WithError(err).Error("Error uploading to bucket")
 			continue
 		}
 	}
@@ -75,7 +78,7 @@ func uploadFile(ctx context.Context, client *storage.Client, fName string) error
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			logrus.WithError(err).Error("Could not close file")
+			log.WithError(err).Error("Could not close file")
 		}
 	}()
 	wc := client.Bucket(monitorFlags.bucketName).Object(fName).NewWriter(ctx)
@@ -102,6 +105,11 @@ func main() {
 				Value:       "",
 				Usage:       "Bucket name for gcp uploads",
 			},
+			&cli.BoolFlag{
+				Name:        "fluentd",
+				Destination: &monitorFlags.fluentd,
+				Usage:       "Fluentd log formatting",
+			},
 			&cli.DurationFlag{
 				Name:        "scrape-interval",
 				Destination: &monitorFlags.scrapeInterval,
@@ -115,6 +123,6 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		logrus.Fatal(err)
+		log.Fatal(err)
 	}
 }
