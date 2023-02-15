@@ -7,15 +7,15 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"cloud.google.com/go/storage"
+	joonix "github.com/joonix/log"
 	types "github.com/prysmaticlabs/prysm/v3/consensus-types/primitives"
 	"github.com/prysmaticlabs/prysm/v3/io/file"
 	"github.com/prysmaticlabs/prysm/v3/proto/eth/service"
 	v1 "github.com/prysmaticlabs/prysm/v3/proto/eth/v1"
-	prefixed "github.com/prysmaticlabs/prysm/v3/runtime/logging/logrus-prefixed-formatter"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"google.golang.org/grpc"
@@ -27,8 +27,8 @@ var (
 	forkchoiceDebugMethod = "/eth/v1/debug/forkchoice"
 	monitorFlags          = struct {
 		beaconEndpoint     string
+		fluentd            bool
 		httpEndpoint       string
-		outDir             string
 		storeDumpsInterval time.Duration
 		purgeDumpsInterval time.Duration
 		useSendgrid        bool
@@ -39,15 +39,10 @@ var (
 		smtpPasswordFile   string
 		smtpUsername       string
 		topics             cli.StringSlice
+		projectId          string
+		bucketName         string
 	}{}
 )
-
-func init() {
-	formatter := new(prefixed.TextFormatter)
-	formatter.TimestampFormat = "2006-01-02 15:04:05"
-	formatter.FullTimestamp = true
-	log.SetFormatter(formatter)
-}
 
 func main() {
 	app := &cli.App{
@@ -66,12 +61,6 @@ func main() {
 				Destination: &monitorFlags.httpEndpoint,
 				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
-			},
-			&cli.StringFlag{
-				Name:        "out-dir",
-				Destination: &monitorFlags.outDir,
-				Value:       "out",
-				Usage:       "Directory for storing forkchoice dumps",
 			},
 			&cli.DurationFlag{
 				Name:        "store-dumps-interval",
@@ -128,8 +117,32 @@ func main() {
 				Destination: &monitorFlags.smtpPasswordFile,
 				Usage:       "File path to an smtp password for sending emails",
 			},
+			&cli.StringFlag{
+				Name:        "project-id",
+				Destination: &monitorFlags.projectId,
+				Value:       "",
+				Usage:       "Project id on gcp",
+			},
+			&cli.StringFlag{
+				Name:        "bucket-name",
+				Destination: &monitorFlags.bucketName,
+				Value:       "",
+				Usage:       "Bucket name for gcp uploads",
+			},
+			&cli.BoolFlag{
+				Name:        "fluentd",
+				Destination: &monitorFlags.fluentd,
+				Usage:       "Fluentd log formatting",
+			},
 		},
 		Action: func(cliCtx *cli.Context) error {
+			if monitorFlags.fluentd {
+				f := joonix.NewFormatter()
+				if err := joonix.DisableTimestampFormat(f); err != nil {
+					log.Fatal(err)
+				}
+				log.SetFormatter(f)
+			}
 			var sender emailSender
 			if monitorFlags.useSendgrid {
 				sender = newSendgridSender(os.Getenv("SENDGRID_API_KEY"))
@@ -162,8 +175,9 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
-	if err := os.MkdirAll(monitorFlags.outDir, os.ModeDir); err != nil {
-		return err
+	storageClient, err := storage.NewClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
 	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
@@ -177,7 +191,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 		return err
 	}
 
-	go storeForkchoiceDumps(ctx)
+	go storeForkchoiceDumps(ctx, storageClient)
 
 	for {
 		data, err := recv.Recv()
@@ -207,17 +221,14 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	}
 }
 
-func storeForkchoiceDumps(ctx context.Context) {
+func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 	timer := time.NewTicker(monitorFlags.storeDumpsInterval)
 	defer timer.Stop()
 	for {
 		select {
 		case <-timer.C:
-			if err := writeForkchoiceDump(); err != nil {
+			if err := writeForkchoiceDump(ctx, storageClient); err != nil {
 				log.WithError(err).Error("Could not write forkchoice dump")
-			}
-			if err := purgeOldFiles(monitorFlags.outDir, monitorFlags.purgeDumpsInterval); err != nil {
-				log.WithError(err).Error("Could not purge old forkchoice dumps")
 			}
 		case <-ctx.Done():
 			return
@@ -225,32 +236,7 @@ func storeForkchoiceDumps(ctx context.Context) {
 	}
 }
 
-func purgeOldFiles(dir string, ttl time.Duration) error {
-	items, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, item := range items {
-		if item.IsDir() {
-			continue
-		}
-		info, err := item.Info()
-		if err != nil {
-			log.WithError(err).Error("Could not get file info")
-			continue
-		}
-		purgeCutoff := time.Now().Add(-ttl)
-		if purgeCutoff.After(info.ModTime()) {
-			if err = os.Remove(filepath.Join(dir, info.Name())); err != nil {
-				log.WithError(err).Error("Could not remove file")
-				continue
-			}
-		}
-	}
-	return nil
-}
-
-func writeForkchoiceDump() error {
+func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) error {
 	var forkchoiceDump map[string]interface{}
 	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
 	if err != nil {
@@ -260,16 +246,13 @@ func writeForkchoiceDump() error {
 		return err
 	}
 	fileName := forkchoiceFileName()
-	f, err := os.Create(filepath.Join(monitorFlags.outDir, fileName))
-	if err != nil {
-		return err
-	}
+	wc := storageClient.Bucket(monitorFlags.bucketName).Object(fileName).NewWriter(ctx)
 	defer func() {
-		if err = f.Close(); err != nil {
-			log.WithError(err).Error("Could not close file")
+		if err := wc.Close(); err != nil {
+			log.WithError(err).Error("Could not close")
 		}
 	}()
-	return json.NewEncoder(f).Encode(forkchoiceDump)
+	return json.NewEncoder(wc).Encode(forkchoiceDump)
 }
 
 func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte) error {
