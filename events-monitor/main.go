@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -175,6 +176,7 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
+	log.Info("Starting reorg monitor")
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
@@ -222,6 +224,7 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 }
 
 func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
+	log.Info("Now starting goroutine for forkchoice dumps")
 	timer := time.NewTicker(monitorFlags.storeDumpsInterval)
 	defer timer.Stop()
 	for {
@@ -237,15 +240,27 @@ func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 }
 
 func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) error {
+	log.Info("Attempting to write forkchoice dump")
 	var forkchoiceDump map[string]interface{}
 	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
 	if err != nil {
 		return err
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&forkchoiceDump); err != nil {
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.WithError(err).Error("Could not close body")
+		}
+	}()
+	enc, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	log.Infof("Got %s response from debug endpoint", enc)
+	if err := json.Unmarshal(enc, &forkchoiceDump); err != nil {
 		return err
 	}
 	fileName := forkchoiceFileName()
+	log.WithField("bucket", monitorFlags.bucketName).Infof("Attempting to write %s to cloud bucket", fileName)
 	wc := storageClient.Bucket(monitorFlags.bucketName).Object(fileName).NewWriter(ctx)
 	defer func() {
 		if err := wc.Close(); err != nil {
