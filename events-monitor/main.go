@@ -42,6 +42,7 @@ var (
 		topics             cli.StringSlice
 		projectId          string
 		bucketName         string
+		onReorgDepth       uint64
 	}{}
 )
 
@@ -62,18 +63,6 @@ func main() {
 				Destination: &monitorFlags.httpEndpoint,
 				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
-			},
-			&cli.DurationFlag{
-				Name:        "store-dumps-interval",
-				Destination: &monitorFlags.storeDumpsInterval,
-				Value:       time.Minute * 5,
-				Usage:       "Interval to store forkchoice dumps (default 5m)",
-			},
-			&cli.DurationFlag{
-				Name:        "purge-dumps-after",
-				Destination: &monitorFlags.purgeDumpsInterval,
-				Value:       time.Hour * 48,
-				Usage:       "Interval to purge forkchoice dumps (default 48h)",
 			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
@@ -135,6 +124,12 @@ func main() {
 				Destination: &monitorFlags.fluentd,
 				Usage:       "Fluentd log formatting",
 			},
+			&cli.Uint64Flag{
+				Name:        "on-reorg-depth",
+				Destination: &monitorFlags.onReorgDepth,
+				Usage:       "Only send emails if reorg depth is >=",
+				Value:       3,
+			},
 		},
 		Action: func(cliCtx *cli.Context) error {
 			if monitorFlags.fluentd {
@@ -177,10 +172,6 @@ type reorgDetectedMetadata struct {
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
 	log.Info("Starting reorg monitor")
-	storageClient, err := storage.NewClient(ctx)
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
 		return err
@@ -192,8 +183,6 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	if err != nil {
 		return err
 	}
-
-	go storeForkchoiceDumps(ctx, storageClient)
 
 	for {
 		data, err := recv.Recv()
@@ -210,13 +199,11 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 			if err := data.Data.UnmarshalTo(ev); err != nil {
 				return err
 			}
-			log.WithField("chain_reorg", ev).Info("Received event")
-			evData, err := json.Marshal(ev)
-			if err != nil {
-				log.WithError(err).Error("Could marshal event")
+			if ev.Depth < monitorFlags.onReorgDepth {
 				continue
 			}
-			if err := sendJSONEmail(sender, "chain_reorg", evData); err != nil {
+			log.WithField("chain_reorg", ev).Info("Received event")
+			if err := sendJSONEmail(sender, "chain_reorg", ev); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
 			}
 		}
@@ -270,10 +257,28 @@ func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) err
 	return json.NewEncoder(wc).Encode(forkchoiceDump)
 }
 
-func sendJSONEmail(sender emailSender, eventName string, eventJSON []byte) error {
+type reorgEvent struct {
+	ev *v1.EventChainReorg
+}
+
+func (r *reorgEvent) String() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "slot=%d\n", r.ev.Slot)
+	fmt.Fprintf(&b, "depth=%d\n", r.ev.Depth)
+	fmt.Fprintf(&b, "old_head_block=%#x\n", r.ev.OldHeadBlock)
+	fmt.Fprintf(&b, "new_head_block=%#x\n", r.ev.NewHeadBlock)
+	fmt.Fprintf(&b, "old_head_state=%#x\n", r.ev.OldHeadState)
+	fmt.Fprintf(&b, "old_head_state=%#x\n", r.ev.NewHeadState)
+	fmt.Fprintf(&b, "epoch=%d\n", r.ev.Epoch)
+	fmt.Fprintf(&b, "execution_optimistic=%v\n", r.ev.ExecutionOptimistic)
+	return b.String()
+}
+
+func sendJSONEmail(sender emailSender, eventName string, ev *v1.EventChainReorg) error {
+	rev := &reorgEvent{ev: ev}
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
-		fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), string(eventJSON)),
+		fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), rev.String()),
 	)
 	m.from = monitorFlags.sendFrom
 	m.to = monitorFlags.sendTo.Value()
