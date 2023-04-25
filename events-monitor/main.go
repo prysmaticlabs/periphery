@@ -64,6 +64,18 @@ func main() {
 				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
 			},
+			&cli.DurationFlag{
+				Name:        "store-dumps-interval",
+				Destination: &monitorFlags.storeDumpsInterval,
+				Value:       time.Minute * 5,
+				Usage:       "Interval to store forkchoice dumps (default 5m)",
+			},
+			&cli.DurationFlag{
+				Name:        "purge-dumps-after",
+				Destination: &monitorFlags.purgeDumpsInterval,
+				Value:       time.Hour * 48,
+				Usage:       "Interval to purge forkchoice dumps (default 48h)",
+			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
 				Destination: &monitorFlags.topics,
@@ -172,6 +184,10 @@ type reorgDetectedMetadata struct {
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
 	log.Info("Starting reorg monitor")
+	storageClient, err := storage.NewClient(ctx)
+	if err != nil {
+		return err
+	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
 		return err
@@ -183,6 +199,8 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	if err != nil {
 		return err
 	}
+
+	go storeForkchoiceDumps(ctx, storageClient)
 
 	for {
 		data, err := recv.Recv()
@@ -232,6 +250,9 @@ func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) err
 	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
