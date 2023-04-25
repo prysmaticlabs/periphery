@@ -25,7 +25,7 @@ import (
 const emailSlotsPerReorg = 32 // If we receive a reorg event, for the next 32 slots, email a forkchoice dump.
 
 var (
-	forkchoiceDebugMethod = "/eth/v1/debug/forkchoice"
+	forkchoiceDebugMethod = "/eth/v1/debug/fork_choice"
 	monitorFlags          = struct {
 		beaconEndpoint     string
 		fluentd            bool
