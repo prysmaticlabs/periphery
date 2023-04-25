@@ -247,8 +247,8 @@ func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) err
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		log.Error("Request to URL: %s", url)
-		log.Error("Response: %+v", resp)
+		log.Errorf("Request to URL: %s", url)
+		log.Errorf("Response: %+v", resp)
 		return fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
 	}
 	defer func() {
