@@ -25,7 +25,7 @@ import (
 const emailSlotsPerReorg = 32 // If we receive a reorg event, for the next 32 slots, email a forkchoice dump.
 
 var (
-	forkchoiceDebugMethod = "/eth/v1/debug/forkchoice"
+	forkchoiceDebugMethod = "/eth/v1/debug/fork_choice"
 	monitorFlags          = struct {
 		beaconEndpoint     string
 		fluentd            bool
@@ -63,6 +63,12 @@ func main() {
 				Destination: &monitorFlags.httpEndpoint,
 				Value:       "http://localhost:3500",
 				Usage:       "HTTP standard API endpoint for an Ethereum beacon node",
+			},
+			&cli.DurationFlag{
+				Name:        "store-dumps-interval",
+				Destination: &monitorFlags.storeDumpsInterval,
+				Value:       time.Minute * 5,
+				Usage:       "Interval to store forkchoice dumps (default 5m)",
 			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
@@ -172,6 +178,10 @@ type reorgDetectedMetadata struct {
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
 	log.Info("Starting reorg monitor")
+	storageClient, err := storage.NewClient(ctx)
+	if err != nil {
+		return err
+	}
 	conn, err := grpc.Dial(monitorFlags.beaconEndpoint, grpc.WithInsecure())
 	if err != nil {
 		return err
@@ -183,6 +193,8 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 	if err != nil {
 		return err
 	}
+
+	go storeForkchoiceDumps(ctx, storageClient)
 
 	for {
 		data, err := recv.Recv()
@@ -229,9 +241,15 @@ func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) error {
 	log.Info("Attempting to write forkchoice dump")
 	var forkchoiceDump map[string]interface{}
-	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
+	url := monitorFlags.httpEndpoint + forkchoiceDebugMethod
+	resp, err := http.Get(url)
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Errorf("Request to URL: %s", url)
+		log.Errorf("Response: %+v", resp)
+		return fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
