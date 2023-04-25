@@ -70,12 +70,6 @@ func main() {
 				Value:       time.Minute * 5,
 				Usage:       "Interval to store forkchoice dumps (default 5m)",
 			},
-			&cli.DurationFlag{
-				Name:        "purge-dumps-after",
-				Destination: &monitorFlags.purgeDumpsInterval,
-				Value:       time.Hour * 48,
-				Usage:       "Interval to purge forkchoice dumps (default 48h)",
-			},
 			&cli.StringSliceFlag{
 				Name:        "topics",
 				Destination: &monitorFlags.topics,
