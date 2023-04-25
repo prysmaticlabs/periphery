@@ -241,11 +241,14 @@ func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) error {
 	log.Info("Attempting to write forkchoice dump")
 	var forkchoiceDump map[string]interface{}
-	resp, err := http.Get(monitorFlags.httpEndpoint + forkchoiceDebugMethod)
+	url := monitorFlags.httpEndpoint + forkchoiceDebugMethod
+	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
+		log.Error("Request to URL: %s", url)
+		log.Error("Response: %+v", resp)
 		return fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
 	}
 	defer func() {
