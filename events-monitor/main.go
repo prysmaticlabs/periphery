@@ -178,7 +178,7 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
-	log.WithField("commit", Commit).Info("Starting reorg monitor")
+	log.Info("Starting reorg monitor")
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
@@ -309,7 +309,6 @@ func sendJSONEmail(sender emailSender, eventName string, ev *v1.EventChainReorg,
 	if dumpFilename != "" {
 		body += fmt.Sprintf("\n\nForkchoice dump written: %s\n", dumpFilename)
 	}
-	body += fmt.Sprintf("\nSend with love running commit %s\n", Commit)
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
 		body,
