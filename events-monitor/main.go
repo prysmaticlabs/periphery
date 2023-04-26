@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -177,7 +178,7 @@ type reorgDetectedMetadata struct {
 }
 
 func monitorEvents(ctx context.Context, sender emailSender) error {
-	log.Info("Starting reorg monitor")
+	log.WithField("commit", Commit).Info("Starting reorg monitor")
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		return err
@@ -215,7 +216,15 @@ func monitorEvents(ctx context.Context, sender emailSender) error {
 				continue
 			}
 			log.WithField("chain_reorg", ev).Info("Received event")
-			if err := sendJSONEmail(sender, "chain_reorg", ev); err != nil {
+			var dumpFilename string
+			obj, err := writeForkchoiceDump(ctx, storageClient)
+			if err != nil {
+				log.WithError(err).Error("Could not write forkchoice dump")
+			} else {
+				dumpFilename = "gs://" + path.Join(obj.BucketName(), obj.ObjectName())
+			}
+
+			if err := sendJSONEmail(sender, "chain_reorg", ev, dumpFilename); err != nil {
 				log.WithError(err).Error("Could not send chain_reorg event as email attachment")
 			}
 		}
@@ -229,7 +238,7 @@ func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 	for {
 		select {
 		case <-timer.C:
-			if err := writeForkchoiceDump(ctx, storageClient); err != nil {
+			if _, err := writeForkchoiceDump(ctx, storageClient); err != nil {
 				log.WithError(err).Error("Could not write forkchoice dump")
 			}
 		case <-ctx.Done():
@@ -238,18 +247,18 @@ func storeForkchoiceDumps(ctx context.Context, storageClient *storage.Client) {
 	}
 }
 
-func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) error {
+func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) (*storage.ObjectHandle, error) {
 	log.Info("Attempting to write forkchoice dump")
 	var forkchoiceDump map[string]interface{}
 	url := monitorFlags.httpEndpoint + forkchoiceDebugMethod
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Errorf("Request to URL: %s", url)
 		log.Errorf("Response: %+v", resp)
-		return fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("did not receive OK HTTP status: %d", resp.StatusCode)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -258,21 +267,23 @@ func writeForkchoiceDump(ctx context.Context, storageClient *storage.Client) err
 	}()
 	enc, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Infof("Got %s response from debug endpoint", enc)
 	if err := json.Unmarshal(enc, &forkchoiceDump); err != nil {
-		return err
+		return nil, err
 	}
 	fileName := forkchoiceFileName()
 	log.WithField("bucket", monitorFlags.bucketName).Infof("Attempting to write %s to cloud bucket", fileName)
-	wc := storageClient.Bucket(monitorFlags.bucketName).Object(fileName).NewWriter(ctx)
+	obj := storageClient.Bucket(monitorFlags.bucketName).Object(fileName)
+	wc := obj.NewWriter(ctx)
 	defer func() {
 		if err := wc.Close(); err != nil {
 			log.WithError(err).Error("Could not close")
 		}
 	}()
-	return json.NewEncoder(wc).Encode(forkchoiceDump)
+
+	return obj, json.NewEncoder(wc).Encode(forkchoiceDump)
 }
 
 type reorgEvent struct {
@@ -292,12 +303,17 @@ func (r *reorgEvent) String() string {
 	return b.String()
 }
 
-func sendJSONEmail(sender emailSender, eventName string, ev *v1.EventChainReorg) error {
+func sendJSONEmail(sender emailSender, eventName string, ev *v1.EventChainReorg, dumpFilename string) error {
 	rev := &reorgEvent{ev: ev}
+	body := fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), rev.String())
+	if dumpFilename != "" {
+		body += fmt.Sprintf("\n\nForkchoice dump written: %s\n", dumpFilename)
+	}
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
-		fmt.Sprintf("Detected %s event at %v with data %s\n", eventName, time.Now(), rev.String()),
+		body,
 	)
+	body += fmt.Sprintf("\nSend with love running commit %s\n", Commit)
 	m.from = monitorFlags.sendFrom
 	m.to = monitorFlags.sendTo.Value()
 	return sender.send(m)
