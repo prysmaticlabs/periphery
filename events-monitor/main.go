@@ -309,11 +309,11 @@ func sendJSONEmail(sender emailSender, eventName string, ev *v1.EventChainReorg,
 	if dumpFilename != "" {
 		body += fmt.Sprintf("\n\nForkchoice dump written: %s\n", dumpFilename)
 	}
+	body += fmt.Sprintf("\nSend with love running commit %s\n", Commit)
 	m := newEmailMessage(
 		fmt.Sprintf("New %s event detected", eventName),
 		body,
 	)
-	body += fmt.Sprintf("\nSend with love running commit %s\n", Commit)
 	m.from = monitorFlags.sendFrom
 	m.to = monitorFlags.sendTo.Value()
 	return sender.send(m)
